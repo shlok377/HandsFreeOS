@@ -70,6 +70,7 @@ class ActionType(str, Enum):
     CLICK_BOX = "click_box"
     TYPE_TEXT = "type_text"
     ABORT = "abort"
+    SHUTDOWN = "shutdown"
     ASK_CONFIRMATION = "ask_confirmation"
     NOOP = "noop"
 

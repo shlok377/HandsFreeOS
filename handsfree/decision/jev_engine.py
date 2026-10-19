@@ -24,9 +24,10 @@ class JevEngine(IDecisionEngine):
         self.command_verbs = {
             "open", "launch", "start", "switch", "focus", "close", "kill",
             "make", "create", "write", "type", "click", "tap", "press",
-            "scroll", "search", "find", "goto", "navigate", "send", "save",
+            "scroll", "search", "find", "google", "goto", "navigate", "send", "save",
             "delete", "remove", "clear", "copy", "paste", "cut", "undo", "redo",
-            "rm", "del", "erase", "format", "reboot", "shutdown", "drop", "sudo"
+            "rm", "del", "erase", "format", "reboot", "shutdown", "drop", "sudo",
+            "say", "tell", "greet", "exit", "quit", "help"
         }
 
         # Triggers for live interruption aborts
@@ -154,6 +155,12 @@ class JevEngine(IDecisionEngine):
         if cleaned.startswith("hey bit") or cleaned.startswith("bit") or "bit," in cleaned:
             return True
 
+        # Conversational greetings / questions / exit commands (anchored or directed to assistant)
+        if re.search(r"^(?:say\s+)?(?:hi|hello|hey)(?:\s+(?:there|bit|to\s+me))?$", cleaned):
+            return True
+        if re.search(r"^(?:who\s+are\s+you|what\s+can\s+you\s+do|how\s+are\s+you|close\s+yourself|exit|quit|stop\s+listening)$", cleaned):
+            return True
+
         # Check starting word or clause for command verbs
         words = re.findall(r"\b\w+\b", cleaned)
         if not words:
@@ -163,8 +170,8 @@ class JevEngine(IDecisionEngine):
         if first_word in self.command_verbs:
             return True
 
-        # Common multi-word phrases (e.g. "make a new txt file", "can you open")
-        if re.search(r"\b(open|launch|make a|create a|switch to|click on|type in)\b", cleaned):
+        # Common multi-word phrases (e.g. "make a new txt file", "can you open", "search for")
+        if re.search(r"\b(open|launch|make a|create a|switch to|click on|type in|search in|search for|google for)\b", cleaned):
             return True
 
         return False

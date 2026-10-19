@@ -3,6 +3,8 @@
 import logging
 import os
 import re
+import shutil
+import urllib.parse
 from typing import Optional
 
 from handsfree.domain.interfaces import IDecisionEngine, IOSController, IInputController, ITextToSpeech
@@ -74,9 +76,27 @@ class IntentDispatcher:
             logger.debug(f"Ambient speech ignored: '{raw_text}'")
             return ActionEvent(action_type=ActionType.NOOP)
 
-        # Clean "Hey Bit" prefixes
+        # Clean "Hey Bit" prefixes and punctuation
         command = re.sub(r"^(hey\s+)?bit[,\s!]*", "", raw_text, flags=re.IGNORECASE).strip()
+        command = re.sub(r"[\.\?!]+$", "", command).strip()
         cmd_lower = command.lower()
+
+        # Handle exit / close yourself
+        if cmd_lower in {"close yourself", "exit", "quit", "shutdown", "stop listening", "goodbye", "bye"}:
+            msg = "Goodbye! Shutting down Bit."
+            self.tts.speak(msg)
+            return ActionEvent(action_type=ActionType.SHUTDOWN, target="exit", verbal_response=msg)
+
+        # Handle greetings & conversational chat
+        if re.search(r"\b(say\s+hi|say\s+hello|greet\s+me)\b", cmd_lower) or cmd_lower in {"hello", "hi", "hey"}:
+            msg = "Hello! I'm Bit, your hands-free assistant. What can I do for you?"
+            self.tts.speak(msg)
+            return ActionEvent(action_type=ActionType.NOOP, verbal_response=msg)
+
+        if re.search(r"\b(who are you|what are you|what can you do|help)\b", cmd_lower):
+            msg = "I'm Bit. You can ask me to open apps, search the web, type text, click elements, or manage files."
+            self.tts.speak(msg)
+            return ActionEvent(action_type=ActionType.NOOP, verbal_response=msg)
 
         # 4. SAFETY GATE (P(destructive) > 0.80)
         safety_decision = self.decision_engine.evaluate_score(
@@ -111,24 +131,34 @@ class IntentDispatcher:
                 verbal_response=f"Typed {text_to_type}"
             )
 
-        # 6. FILE CREATION & SHELL
+        # 6. WEB SEARCH INTENT ("search <query> [in my browser|on google|on web|online]" or "google <query>")
+        search_match = re.search(
+            r"^(?:please\s+)?(?:search(?:\s+for)?|google)\s+(.+?)(?:\s+(?:in\s+(?:my\s+)?browser|on\s+google|on\s+(?:the\s+)?web|online))?$",
+            command,
+            flags=re.IGNORECASE,
+        )
+        if search_match:
+            query = search_match.group(1).strip()
+            return self._handle_web_search(query)
+
+        # 7. FILE CREATION & SHELL
         if re.search(r"\bmake\s+(a\s+)?new\s+(\w+\s+)?file\b", cmd_lower):
             return self._handle_file_creation(command)
 
-        # 7. APP LAUNCHING & URL NAVIGATION
+        # 8. APP LAUNCHING & URL NAVIGATION
         if cmd_lower.startswith("open ") or cmd_lower.startswith("launch "):
             target = re.sub(r"^(open|launch)\s+", "", command, flags=re.IGNORECASE).strip()
             return self._handle_open_target(target)
 
-        # 8. WINDOW SWITCHING & CLOSING
+        # 9. WINDOW SWITCHING & CLOSING
         if cmd_lower.startswith("switch to ") or cmd_lower.startswith("focus "):
             target = re.sub(r"^(switch to|focus)\s+", "", command, flags=re.IGNORECASE).strip()
             return self._handle_window_focus(target)
 
-        if cmd_lower == "close this" or cmd_lower == "close window":
+        if cmd_lower in {"close this", "close window", "close"}:
             return self._handle_close_window(active_win)
 
-        # 9. VISUAL CLICK & GROUNDING
+        # 10. VISUAL CLICK & GROUNDING
         if re.search(r"\b(click|tap|press)\b", cmd_lower):
             target = re.sub(r"^(please\s+)?(click\s+(on\s+)?|tap\s+(on\s+)?|press\s+)", "", command, flags=re.IGNORECASE).strip()
             return self._handle_visual_click(target, screenshot_bytes, is_browser)
@@ -139,9 +169,19 @@ class IntentDispatcher:
         self.tts.speak(response_msg)
         return ActionEvent(action_type=ActionType.LAUNCH_APP, target=command, verbal_response=response_msg)
 
+    def _handle_web_search(self, query: str) -> ActionEvent:
+        """Executes a web search via default browser."""
+        encoded_query = urllib.parse.quote_plus(query)
+        url = f"https://www.google.com/search?q={encoded_query}"
+        self.os_controller.open_url(url)
+        msg = f"Searching for {query} in browser"
+        self.tts.speak(msg)
+        return ActionEvent(action_type=ActionType.OPEN_URL, target=url, verbal_response=msg)
+
     def _handle_open_target(self, target: str) -> ActionEvent:
         """Handles opening an application or website."""
-        clean_target = target.lower()
+        clean_target = re.sub(r"[\.\?!,]+$", "", target).strip().lower()
+        normalized_target = re.sub(r"^(my\s+)", "", clean_target).strip()
 
         # Handle web applications (e.g. "webwhatsapp", "whatsapp")
         if "webwhatsapp" in clean_target or "whatsapp" in clean_target:
@@ -150,23 +190,79 @@ class IntentDispatcher:
             self.tts.speak(msg)
             return ActionEvent(action_type=ActionType.OPEN_URL, target="https://web.whatsapp.com", verbal_response=msg)
 
+        if "discord" in clean_target:
+            if shutil.which("discord"):
+                self.os_controller.launch_app("discord")
+                msg = "Opening Discord"
+                action = ActionType.LAUNCH_APP
+            else:
+                self.os_controller.open_url("https://discord.com/app")
+                msg = "Opening Discord in browser"
+                action = ActionType.OPEN_URL
+            self.tts.speak(msg)
+            return ActionEvent(action_type=action, target="discord", verbal_response=msg)
+
         if "herdr" in clean_target:
             self.os_controller.launch_app("herdr")
             msg = "Opening Herdr now"
             self.tts.speak(msg)
             return ActionEvent(action_type=ActionType.LAUNCH_APP, target="herdr", verbal_response=msg)
 
-        if clean_target.startswith("http") or "." in clean_target:
-            self.os_controller.open_url(clean_target)
+        # Generic application aliases
+        if normalized_target in {"text editor", "editor", "notepad", "code editor"}:
+            editor_bin = (
+                "omawrite" if shutil.which("omawrite")
+                else ("subl" if shutil.which("subl")
+                else ("code" if shutil.which("code")
+                else ("gedit" if shutil.which("gedit")
+                else ("kate" if shutil.which("kate")
+                else "xdg-open"))))
+            )
+            self.os_controller.launch_app(editor_bin)
+            msg = "Opening text editor"
+            self.tts.speak(msg)
+            return ActionEvent(action_type=ActionType.LAUNCH_APP, target=editor_bin, verbal_response=msg)
+
+        if normalized_target in {"browser", "web browser", "internet"}:
+            browser_bin = "firefox" if shutil.which("firefox") else ("chromium" if shutil.which("chromium") else "xdg-open")
+            self.os_controller.launch_app(browser_bin)
+            msg = "Opening browser"
+            self.tts.speak(msg)
+            return ActionEvent(action_type=ActionType.LAUNCH_APP, target=browser_bin, verbal_response=msg)
+
+        if normalized_target in {"file manager", "files", "file explorer"}:
+            fm_bin = "nautilus" if shutil.which("nautilus") else ("dolphin" if shutil.which("dolphin") else "thunar")
+            self.os_controller.launch_app(fm_bin)
+            msg = "Opening file manager"
+            self.tts.speak(msg)
+            return ActionEvent(action_type=ActionType.LAUNCH_APP, target=fm_bin, verbal_response=msg)
+
+        if normalized_target in {"terminal", "console", "shell"}:
+            term_bin = "ghostty" if shutil.which("ghostty") else ("foot" if shutil.which("foot") else "alacritty")
+            self.os_controller.launch_app(term_bin)
+            msg = "Opening terminal"
+            self.tts.speak(msg)
+            return ActionEvent(action_type=ActionType.LAUNCH_APP, target=term_bin, verbal_response=msg)
+
+        # Specific URL detection: requires http://, https://, www., or a real domain pattern without spaces
+        is_url = (
+            clean_target.startswith("http://")
+            or clean_target.startswith("https://")
+            or clean_target.startswith("www.")
+            or (re.match(r"^[\w\-]+(\.[\w\-]+)+(?:/[^\s]*)?$", clean_target) is not None and " " not in clean_target)
+        )
+        if is_url:
+            url = clean_target if clean_target.startswith("http") else f"https://{clean_target}"
+            self.os_controller.open_url(url)
             msg = f"Opening {clean_target}"
             self.tts.speak(msg)
-            return ActionEvent(action_type=ActionType.OPEN_URL, target=clean_target, verbal_response=msg)
+            return ActionEvent(action_type=ActionType.OPEN_URL, target=url, verbal_response=msg)
 
         # Default desktop app launch
-        self.os_controller.launch_app(target)
-        msg = f"Opening {target}"
+        self.os_controller.launch_app(normalized_target)
+        msg = f"Opening {normalized_target}"
         self.tts.speak(msg)
-        return ActionEvent(action_type=ActionType.LAUNCH_APP, target=target, verbal_response=msg)
+        return ActionEvent(action_type=ActionType.LAUNCH_APP, target=normalized_target, verbal_response=msg)
 
     def _handle_file_creation(self, command: str) -> ActionEvent:
         """Extracts filename and content and creates file directly."""

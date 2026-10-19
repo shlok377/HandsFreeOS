@@ -170,3 +170,44 @@ def test_visual_click_seam(dispatcher, monkeypatch):
     assert event.target == "(150, 70)"
     assert "Clicked search bar" in event.verbal_response
     assert dispatcher.input_controller.history[-1]["target"] == (150, 70)
+
+
+def test_search_query_seam(dispatcher):
+    """Verifies: 'Search Discord in my browser.' and 'Search hello in my browser.'."""
+    chunk1 = SpeechChunk(text="Search Discord in my browser.", is_final=True)
+    event1 = dispatcher.process_speech_frame(chunk1)
+    assert event1.action_type == ActionType.OPEN_URL
+    assert "https://www.google.com/search?q=Discord" in event1.target
+    assert "Searching for Discord" in event1.verbal_response
+
+    chunk2 = SpeechChunk(text="Search hello in my browser.", is_final=True)
+    event2 = dispatcher.process_speech_frame(chunk2)
+    assert event2.action_type == ActionType.OPEN_URL
+    assert "https://www.google.com/search?q=hello" in event2.target
+    assert "Searching for hello" in event2.verbal_response
+
+
+def test_conversational_greetings_seam(dispatcher):
+    """Verifies: 'Say hi to me.' responds politely."""
+    chunk = SpeechChunk(text="Say hi to me.", is_final=True)
+    event = dispatcher.process_speech_frame(chunk)
+    assert event.action_type == ActionType.NOOP
+    assert "Hello! I'm Bit" in event.verbal_response
+
+
+def test_open_text_editor_alias_seam(dispatcher):
+    """Verifies: 'Open my text editor.' launches an editor, not a URL."""
+    chunk = SpeechChunk(text="Open my text editor.", is_final=True)
+    event = dispatcher.process_speech_frame(chunk)
+    assert event.action_type == ActionType.LAUNCH_APP
+    assert "Opening text editor" in event.verbal_response
+    assert len(dispatcher.os_controller.launched_apps) > 0
+
+
+def test_close_yourself_shutdown_seam(dispatcher):
+    """Verifies: 'Close yourself.' triggers ActionType.SHUTDOWN."""
+    chunk = SpeechChunk(text="Close yourself.", is_final=True)
+    event = dispatcher.process_speech_frame(chunk)
+    assert event.action_type == ActionType.SHUTDOWN
+    assert "Goodbye" in event.verbal_response
+

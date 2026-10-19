@@ -2,13 +2,14 @@
 
 import argparse
 import sys
+import threading
 import time
 
 import numpy as np
 from rich.console import Console
 
 from handsfree.decision.jev_engine import JevEngine
-from handsfree.domain.models import SpeechChunk
+from handsfree.domain.models import ActionType, SpeechChunk
 from handsfree.loop.dispatch import IntentDispatcher
 from handsfree.os_layer.hyprland import HyprlandController
 from handsfree.os_layer.input_controller import AdaptiveInputController
@@ -99,6 +100,8 @@ def run_live(dry_run: bool = False) -> None:
     recognizer.load_model()
     screencap = ScreenCapture()
 
+    shutdown_event = threading.Event()
+
     def on_speech_chunk(chunk: SpeechChunk) -> None:
         if not chunk.text or not chunk.text.strip():
             return
@@ -119,6 +122,10 @@ def run_live(dry_run: bool = False) -> None:
         dashboard.add_log(f"Action: {event.action_type.value} -> {event.target or ''}")
         if event.verbal_response:
             dashboard.tts_status = f"Speaking: '{event.verbal_response}'"
+
+        if event.action_type == ActionType.SHUTDOWN:
+            dashboard.add_log("Shutting down Bit...")
+            shutdown_event.set()
 
     audio_stream = ContinuousAudioStream(
         vad=vad, recognizer=recognizer, on_speech_chunk=on_speech_chunk
@@ -189,11 +196,13 @@ def run_live(dry_run: bool = False) -> None:
 
     try:
         with Live(dashboard.render(), console=console, refresh_per_second=4) as live:
-            while True:
+            while not shutdown_event.is_set():
                 active_win = os_ctrl.get_active_window()
                 dashboard.update_window(active_win)
                 live.update(dashboard.render())
                 time.sleep(0.25)
+            # Give speech feedback a moment to finish before process termination
+            time.sleep(1.0)
     except KeyboardInterrupt:
         dashboard.add_log("Shutting down HandsFreeOS...")
     finally:
