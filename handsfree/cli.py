@@ -145,6 +145,8 @@ def run_live(dry_run: bool = False) -> None:
             if status:
                 pass
             frame = indata[:, 0].copy()  # Mono float32
+            rms = float(np.sqrt(np.mean(frame**2)))
+            dashboard.update_audio_level(rms)
             audio_stream.feed_frame(frame)
 
         sd_stream = sd.InputStream(

@@ -26,7 +26,7 @@ class PhononRecognizer:
             logger.info(f"Loading Phonon-2 speech engine ({self.model_name})...")
             self._model = fermion.load_speech(self.model_name)
             try:
-                self._model.set_hotwords(["Bit", "WhatsApp", "Herdr", "Google", "Chrome", "Firefox"], lam=2.5)
+                self._model.set_hotwords(["Bit", "WhatsApp", "Herdr", "Dolphin", "Google", "Chrome", "Firefox"], lam=2.5)
             except Exception as e:
                 logger.debug(f"Hotwords configuration skipped: {e}")
             self._initialized = True

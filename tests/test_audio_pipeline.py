@@ -12,7 +12,7 @@ from handsfree.domain.models import SpeechChunk
 def test_vad_speech_detection():
     """Verifies that VAD detects speech energy and marks end-of-speech correctly."""
     # 16kHz audio, 100ms frames = 1600 samples
-    vad = VoiceActivityDetector(sample_rate=16000, energy_threshold=0.015, silence_timeout_ms=200)
+    vad = VoiceActivityDetector(sample_rate=16000, min_energy_threshold=0.015, silence_timeout_ms=200)
 
     # Pure silence frame
     silence = np.zeros(1600, dtype=np.float32)
@@ -49,21 +49,24 @@ def test_echo_suppression_blocks_audio_ingestion(monkeypatch):
 
     stream = ContinuousAudioStream(vad=vad, recognizer=recognizer)
 
-    t = np.linspace(0, 0.1, 1600, endpoint=False, dtype=np.float32)
-    loud_frame = 0.3 * np.sin(2 * np.pi * 440 * t)
+    try:
+        t = np.linspace(0, 0.1, 1600, endpoint=False, dtype=np.float32)
+        loud_frame = 0.3 * np.sin(2 * np.pi * 440 * t)
 
-    # 1. Normal state: frame is accepted
-    res = stream.feed_frame(loud_frame)
-    assert stream.is_echo_suppressed is False
+        # 1. Normal state: frame is accepted
+        res = stream.feed_frame(loud_frame)
+        assert stream.is_echo_suppressed is False
 
-    # 2. Engage echo suppression (Bit is speaking)
-    stream.set_echo_suppression(True)
-    assert stream.is_echo_suppressed is True
+        # 2. Engage echo suppression (Bit is speaking)
+        stream.set_echo_suppression(True)
+        assert stream.is_echo_suppressed is True
 
-    # Audio fed while suppressed must return None immediately
-    res_suppressed = stream.feed_frame(loud_frame)
-    assert res_suppressed is None
+        # Audio fed while suppressed must return None immediately
+        res_suppressed = stream.feed_frame(loud_frame)
+        assert res_suppressed is None
 
-    # 3. Disengage echo suppression
-    stream.set_echo_suppression(False)
-    assert stream.is_echo_suppressed is False
+        # 3. Disengage echo suppression
+        stream.set_echo_suppression(False)
+        assert stream.is_echo_suppressed is False
+    finally:
+        stream.stop()
