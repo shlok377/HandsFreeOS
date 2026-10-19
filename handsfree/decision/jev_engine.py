@@ -226,12 +226,16 @@ class JevEngine(IDecisionEngine):
         if q in label or label in q:
             return 0.85
 
-        # Word overlap
-        q_words = set(re.findall(r"\b\w+\b", q))
-        label_words = set(re.findall(r"\b\w+\b", label))
+        # Word overlap excluding generic UI stopwords
+        generic_stopwords = {"icon", "button", "item", "element", "clickable", "unlabelled", "image", "box"}
+        q_words = set(re.findall(r"\b\w+\b", q)) - generic_stopwords
+        label_words = set(re.findall(r"\b\w+\b", label)) - generic_stopwords
         overlap = q_words.intersection(label_words)
         if overlap:
             return 0.7 + (0.1 * min(len(overlap), 3))
+
+        if not q_words or not label_words:
+            return 0.1 if box.is_icon else 0.0
 
         return SequenceMatcher(None, label, q).ratio()
 
