@@ -25,7 +25,8 @@ class JevEngine(IDecisionEngine):
             "open", "launch", "start", "switch", "focus", "close", "kill",
             "make", "create", "write", "type", "click", "tap", "press",
             "scroll", "search", "find", "goto", "navigate", "send", "save",
-            "delete", "remove", "clear", "copy", "paste", "cut", "undo", "redo"
+            "delete", "remove", "clear", "copy", "paste", "cut", "undo", "redo",
+            "rm", "del", "erase", "format", "reboot", "shutdown", "drop", "sudo"
         }
 
         # Triggers for live interruption aborts
