@@ -211,3 +211,40 @@ def test_close_yourself_shutdown_seam(dispatcher):
     assert event.action_type == ActionType.SHUTDOWN
     assert "Goodbye" in event.verbal_response
 
+
+def test_open_new_tab_seam(dispatcher):
+    """Verifies: 'bit open new tab' and 'Hey bit, open new tab in my browser.' trigger ctrl+t."""
+    chunk1 = SpeechChunk(text="bit open new tab", is_final=True)
+    event1 = dispatcher.process_speech_frame(chunk1)
+    assert event1.action_type == ActionType.HOTKEY
+    assert event1.target == "ctrl+t"
+    assert "ctrl+t" in event1.llm_output
+
+    chunk2 = SpeechChunk(text="Hey bit, open new tab in my browser.", is_final=True)
+    event2 = dispatcher.process_speech_frame(chunk2)
+    assert event2.action_type == ActionType.HOTKEY
+    assert event2.target == "ctrl+t"
+
+
+def test_screen_query_seam(dispatcher, monkeypatch):
+    """Verifies: 'What do you see on my screen?' queries local reasoner."""
+    monkeypatch.setattr(
+        dispatcher.local_llm,
+        "answer_screen_query",
+        lambda *args, **kwargs: {"answer": "I see your desktop with VS Code.", "raw_response": "I see your desktop with VS Code."}
+    )
+    chunk = SpeechChunk(text="What do you see on my screen?", is_final=True)
+    event = dispatcher.process_speech_frame(chunk)
+    assert event.action_type == ActionType.ANSWER_USER
+    assert "I see your desktop" in event.verbal_response
+    assert "I see your desktop" in event.llm_output
+
+
+def test_close_yourselves_plural_seam(dispatcher):
+    """Verifies: 'Close yourselves.' triggers ActionType.SHUTDOWN."""
+    chunk = SpeechChunk(text="Close yourselves.", is_final=True)
+    event = dispatcher.process_speech_frame(chunk)
+    assert event.action_type == ActionType.SHUTDOWN
+    assert "Goodbye" in event.verbal_response
+
+

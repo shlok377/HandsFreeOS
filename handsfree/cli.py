@@ -120,6 +120,8 @@ def run_live(dry_run: bool = False) -> None:
         )
 
         dashboard.add_log(f"Action: {event.action_type.value} -> {event.target or ''}")
+        if event.llm_output:
+            dashboard.update_llm_output(event.llm_output)
         if event.verbal_response:
             dashboard.tts_status = f"Speaking: '{event.verbal_response}'"
 
@@ -143,6 +145,7 @@ def run_live(dry_run: bool = False) -> None:
         input_controller=input_ctrl,
         tts=tts,
         grounder=grounder,
+        on_llm_output=dashboard.update_llm_output,
     )
 
     dashboard.add_log("HandsFreeOS is active and listening to microphone.")

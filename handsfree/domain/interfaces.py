@@ -107,6 +107,11 @@ class IInputController(ABC):
         """Immediately halts any active mouse movement or typing."""
         pass
 
+    @abstractmethod
+    def send_hotkey(self, keys: List[str]) -> None:
+        """Dispatches key combinations like ['ctrl', 't'] to active window."""
+        pass
+
 
 class ITextToSpeech(ABC):
     """Abstract interface for local neural voice feedback."""

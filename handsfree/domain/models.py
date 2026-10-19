@@ -69,6 +69,8 @@ class ActionType(str, Enum):
     OPEN_URL = "open_url"
     CLICK_BOX = "click_box"
     TYPE_TEXT = "type_text"
+    HOTKEY = "hotkey"
+    ANSWER_USER = "answer_user"
     ABORT = "abort"
     SHUTDOWN = "shutdown"
     ASK_CONFIRMATION = "ask_confirmation"
@@ -84,3 +86,4 @@ class ActionEvent(BaseModel):
     is_destructive: bool = False
     requires_confirmation: bool = False
     target_window_class: Optional[str] = None  # To determine browser vs desktop
+    llm_output: str = ""

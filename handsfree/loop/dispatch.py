@@ -5,8 +5,9 @@ import os
 import re
 import shutil
 import urllib.parse
-from typing import Optional
+from typing import Callable, Optional
 
+from handsfree.decision.local_llm import LocalLLMReasoner
 from handsfree.domain.interfaces import IDecisionEngine, IOSController, IInputController, ITextToSpeech
 from handsfree.domain.models import ActionEvent, ActionType, SpeechChunk, WindowInfo
 from handsfree.loop.interruption import InterruptionCoordinator
@@ -25,15 +26,27 @@ class IntentDispatcher:
         input_controller: IInputController,
         tts: ITextToSpeech,
         grounder: Optional[TwoStageGrounder] = None,
+        local_llm: Optional[LocalLLMReasoner] = None,
+        on_llm_output: Optional[Callable[[str], None]] = None,
     ):
         self.decision_engine = decision_engine
         self.os_controller = os_controller
         self.input_controller = input_controller
         self.tts = tts
         self.grounder = grounder or TwoStageGrounder(decision_engine=decision_engine)
+        self.local_llm = local_llm or LocalLLMReasoner()
+        self.on_llm_output = on_llm_output
         self.interruption = InterruptionCoordinator(decision_engine, input_controller)
 
         self._pending_confirmation: Optional[ActionEvent] = None
+
+    def _set_llm_output(self, text: str) -> None:
+        """Reports LLM output to registered listener."""
+        if self.on_llm_output:
+            try:
+                self.on_llm_output(text)
+            except Exception:
+                pass
 
     def process_speech_frame(
         self,
@@ -81,22 +94,57 @@ class IntentDispatcher:
         command = re.sub(r"[\.\?!]+$", "", command).strip()
         cmd_lower = command.lower()
 
-        # Handle exit / close yourself
-        if cmd_lower in {"close yourself", "exit", "quit", "shutdown", "stop listening", "goodbye", "bye"}:
+        active_win = mock_active_window or self.os_controller.get_active_window()
+
+        # Handle exit / close yourself / close yourselves
+        if re.search(r"\b(close\s+yourselves|close\s+yourself|exit|quit|shutdown|stop\s+listening|goodbye|bye)\b", cmd_lower):
             msg = "Goodbye! Shutting down Bit."
             self.tts.speak(msg)
-            return ActionEvent(action_type=ActionType.SHUTDOWN, target="exit", verbal_response=msg)
+            llm_op = "action: shutdown"
+            self._set_llm_output(llm_op)
+            return ActionEvent(action_type=ActionType.SHUTDOWN, target="exit", verbal_response=msg, llm_output=llm_op)
 
         # Handle greetings & conversational chat
         if re.search(r"\b(say\s+hi|say\s+hello|greet\s+me)\b", cmd_lower) or cmd_lower in {"hello", "hi", "hey"}:
             msg = "Hello! I'm Bit, your hands-free assistant. What can I do for you?"
             self.tts.speak(msg)
-            return ActionEvent(action_type=ActionType.NOOP, verbal_response=msg)
+            llm_op = "response: greeting"
+            self._set_llm_output(llm_op)
+            return ActionEvent(action_type=ActionType.NOOP, verbal_response=msg, llm_output=llm_op)
 
         if re.search(r"\b(who are you|what are you|what can you do|help)\b", cmd_lower):
             msg = "I'm Bit. You can ask me to open apps, search the web, type text, click elements, or manage files."
             self.tts.speak(msg)
-            return ActionEvent(action_type=ActionType.NOOP, verbal_response=msg)
+            llm_op = "response: help"
+            self._set_llm_output(llm_op)
+            return ActionEvent(action_type=ActionType.NOOP, verbal_response=msg, llm_output=llm_op)
+
+        # Handle screen query ("what do you see on my screen?")
+        if re.search(r"\b(what\s+do\s+you\s+see(?:\s+on)?|describe|what's\s+on|what\s+is\s+on)\s+(?:the\s+|my\s+)?screen\b", cmd_lower):
+            open_wins = self.os_controller.get_open_windows() if hasattr(self.os_controller, "get_open_windows") else []
+            res = self.local_llm.answer_screen_query(command, active_window=active_win, open_windows=open_wins)
+            ans = res.get("answer", "")
+            raw = res.get("raw_response", ans)
+            self._set_llm_output(raw[:35] if len(raw) > 35 else raw)
+            self.tts.speak(ans)
+            return ActionEvent(action_type=ActionType.ANSWER_USER, target=ans, verbal_response=ans, llm_output=raw)
+
+        # Tab actions
+        if re.search(r"\b(open\s+(?:a\s+)?new\s+tab|new\s+tab)\b", cmd_lower):
+            self.input_controller.send_hotkey(["ctrl", "t"])
+            msg = "Opening new tab"
+            self.tts.speak(msg)
+            llm_op = "hotkey: ctrl+t"
+            self._set_llm_output(llm_op)
+            return ActionEvent(action_type=ActionType.HOTKEY, target="ctrl+t", verbal_response=msg, llm_output=llm_op)
+
+        if re.search(r"\b(close\s+(?:this\s+)?tab)\b", cmd_lower):
+            self.input_controller.send_hotkey(["ctrl", "w"])
+            msg = "Closing tab"
+            self.tts.speak(msg)
+            llm_op = "hotkey: ctrl+w"
+            self._set_llm_output(llm_op)
+            return ActionEvent(action_type=ActionType.HOTKEY, target="ctrl+w", verbal_response=msg, llm_output=llm_op)
 
         # 4. SAFETY GATE (P(destructive) > 0.80)
         safety_decision = self.decision_engine.evaluate_score(
@@ -139,6 +187,8 @@ class IntentDispatcher:
         )
         if search_match:
             query = search_match.group(1).strip()
+            llm_op = f"search: {query}"
+            self._set_llm_output(llm_op)
             return self._handle_web_search(query)
 
         # 7. FILE CREATION & SHELL
@@ -163,11 +213,53 @@ class IntentDispatcher:
             target = re.sub(r"^(please\s+)?(click\s+(on\s+)?|tap\s+(on\s+)?|press\s+)", "", command, flags=re.IGNORECASE).strip()
             return self._handle_visual_click(target, screenshot_bytes, is_browser)
 
-        # Default fallback: Execute as system shell
-        self.os_controller.launch_app(command)
-        response_msg = f"Executing {command}"
+        # 11. System-2 Fallback: Local Qwen reasoner for complex/unseen intent
+        open_wins = self.os_controller.get_open_windows() if hasattr(self.os_controller, "get_open_windows") else []
+        llm_res = self.local_llm.reason_intent(command, active_window=active_win, open_windows=open_wins)
+        llm_raw = llm_res.get("raw_response", "")
+        self._set_llm_output(llm_raw[:35] if len(llm_raw) > 35 else llm_raw)
+
+        intent = llm_res.get("intent", "noop")
+        target = llm_res.get("target")
+        speech = llm_res.get("speech", "")
+
+        if intent == "hotkey" and isinstance(target, list):
+            self.input_controller.send_hotkey(target)
+            if speech:
+                self.tts.speak(speech)
+            return ActionEvent(action_type=ActionType.HOTKEY, target="+".join(target), verbal_response=speech, llm_output=llm_raw)
+
+        elif intent == "launch_app" and target and str(target).lower() != command.lower():
+            self.os_controller.launch_app(str(target))
+            if speech:
+                self.tts.speak(speech)
+            return ActionEvent(action_type=ActionType.LAUNCH_APP, target=str(target), verbal_response=speech, llm_output=llm_raw)
+
+        elif intent == "open_url" and target:
+            self.os_controller.open_url(str(target))
+            if speech:
+                self.tts.speak(speech)
+            return ActionEvent(action_type=ActionType.OPEN_URL, target=str(target), verbal_response=speech, llm_output=llm_raw)
+
+        elif intent == "web_search" and target:
+            return self._handle_web_search(str(target))
+
+        elif intent == "close_window":
+            return self._handle_close_window(active_win)
+
+        elif intent == "shutdown":
+            msg = speech or "Goodbye! Shutting down Bit."
+            self.tts.speak(msg)
+            return ActionEvent(action_type=ActionType.SHUTDOWN, target="exit", verbal_response=msg, llm_output=llm_raw)
+
+        elif speech:
+            self.tts.speak(speech)
+            return ActionEvent(action_type=ActionType.ANSWER_USER, target=speech, verbal_response=speech, llm_output=llm_raw)
+
+        # Default fallback: Unrecognized command
+        response_msg = f"I didn't recognize that command: {command}"
         self.tts.speak(response_msg)
-        return ActionEvent(action_type=ActionType.LAUNCH_APP, target=command, verbal_response=response_msg)
+        return ActionEvent(action_type=ActionType.NOOP, target=command, verbal_response=response_msg, llm_output=llm_raw)
 
     def _handle_web_search(self, query: str) -> ActionEvent:
         """Executes a web search via default browser."""

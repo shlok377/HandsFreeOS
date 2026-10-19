@@ -158,7 +158,9 @@ class JevEngine(IDecisionEngine):
         # Conversational greetings / questions / exit commands (anchored or directed to assistant)
         if re.search(r"^(?:say\s+)?(?:hi|hello|hey)(?:\s+(?:there|bit|to\s+me))?$", cleaned):
             return True
-        if re.search(r"^(?:who\s+are\s+you|what\s+can\s+you\s+do|how\s+are\s+you|close\s+yourself|exit|quit|stop\s+listening)$", cleaned):
+        if re.search(r"^(?:who\s+are\s+you|what\s+can\s+you\s+do|how\s+are\s+you|close\s+yourselves|close\s+yourself|exit|quit|stop\s+listening)$", cleaned):
+            return True
+        if re.search(r"\b(what\s+do\s+you\s+see(?:\s+on)?|describe|what's\s+on|what\s+is\s+on)\s+(?:the\s+|my\s+)?screen\b", cleaned):
             return True
 
         # Check starting word or clause for command verbs
@@ -171,7 +173,7 @@ class JevEngine(IDecisionEngine):
             return True
 
         # Common multi-word phrases (e.g. "make a new txt file", "can you open", "search for")
-        if re.search(r"\b(open|launch|make a|create a|switch to|click on|type in|search in|search for|google for)\b", cleaned):
+        if re.search(r"\b(open|launch|make a|create a|switch to|click on|type in|search in|search for|google for|new tab)\b", cleaned):
             return True
 
         return False

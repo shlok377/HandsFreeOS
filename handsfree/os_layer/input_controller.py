@@ -105,6 +105,45 @@ class AdaptiveInputController(IInputController):
             "is_browser": is_browser
         })
 
+    def send_hotkey(self, keys: list[str]) -> None:
+        """Dispatches key combinations like ['ctrl', 't'] using wtype."""
+        if self._abort_event.is_set():
+            return
+
+        logger.info(f"Dispatching hotkey: {keys}")
+        self.history.append({"action": "hotkey", "keys": keys})
+
+        if self.dry_run:
+            return
+
+        cmd = ["wtype"]
+        modifiers = []
+        regular_keys = []
+        mod_map = {
+            "ctrl": "ctrl", "control": "ctrl",
+            "alt": "alt",
+            "shift": "shift",
+            "super": "logo", "win": "logo", "logo": "logo", "meta": "logo"
+        }
+        for k in keys:
+            kl = k.lower()
+            if kl in mod_map:
+                modifiers.append(mod_map[kl])
+            else:
+                regular_keys.append(k)
+
+        for m in modifiers:
+            cmd.extend(["-M", m])
+        for r in regular_keys:
+            cmd.extend(["-k", r])
+        for m in reversed(modifiers):
+            cmd.extend(["-m", m])
+
+        try:
+            subprocess.run(cmd, check=False, capture_output=True)
+        except Exception as e:
+            logger.warning(f"Failed to dispatch hotkey via wtype: {e}")
+
     def _emit_mouse_move(self, x: int, y: int) -> None:
         """Emits mouse movement to OS."""
         if self.dry_run:

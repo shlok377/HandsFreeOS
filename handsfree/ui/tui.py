@@ -25,6 +25,7 @@ class HandsFreeDashboard:
         self.action_logs: list[str] = []
         self.tts_status: str = "Idle"
         self.mic_level: float = 0.0
+        self.llm_output: str = "(Standby)"
 
         self._setup_layout()
 
@@ -47,6 +48,10 @@ class HandsFreeDashboard:
     def update_audio_level(self, rms: float) -> None:
         """Updates live microphone input level."""
         self.mic_level = rms
+
+    def update_llm_output(self, output: str) -> None:
+        """Updates live LLM output text for TUI."""
+        self.llm_output = output
 
     def update_decision(self, decision: JevDecision) -> None:
         """Updates Jev decision metrics."""
@@ -82,6 +87,7 @@ class HandsFreeDashboard:
         meter_color = "green" if filled > 3 else "dim white"
         meter = f"[{'█' * filled}{'░' * (bar_len - filled)}]"
         left_table.add_row("Mic Level:", Text(f"{meter} ({self.mic_level:.3f})", style=meter_color))
+        left_table.add_row("LLM O/P:", Text(self.llm_output, style="cyan bold"))
 
         if self.last_decision:
             conf_color = "green" if self.last_decision.confidence > 0.8 else "yellow"
