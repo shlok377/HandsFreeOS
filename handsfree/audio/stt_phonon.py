@@ -13,22 +13,27 @@ logger = logging.getLogger(__name__)
 class PhononRecognizer:
     """Ultra-fast local streaming speech recognizer using Phonon-2 / Parakeet-TDT."""
 
-    def __init__(self, model_name: str = "fermion-research/phonon-2", device: str = "cpu"):
+    def __init__(self, model_name: str = "phonon-2", device: str = "cpu"):
         self.model_name = model_name
         self.device = device
         self._model = None
         self._initialized = False
 
     def load_model(self) -> bool:
-        """Attempts to load the Phonon-2 weights if fermion-research is installed."""
+        """Attempts to load the Phonon-2 weights using the fermion package."""
         try:
-            import fermion_research  # type: ignore
-            logger.info("Loading Phonon-2 weights...")
-            self._model = fermion_research.load_model(self.model_name, device=self.device)
+            import fermion  # type: ignore
+            logger.info(f"Loading Phonon-2 speech engine ({self.model_name})...")
+            self._model = fermion.load_speech(self.model_name)
+            try:
+                self._model.set_hotwords(["Bit", "WhatsApp", "Herdr", "Google", "Chrome", "Firefox"], lam=2.5)
+            except Exception as e:
+                logger.debug(f"Hotwords configuration skipped: {e}")
             self._initialized = True
+            logger.info("Phonon-2 speech model loaded successfully with hotword boosting!")
             return True
         except ImportError:
-            logger.info("fermion-research package not found in environment; using lightweight local ASR fallback.")
+            logger.info("fermion package not found in environment; using lightweight local ASR fallback.")
             self._initialized = False
             return False
         except Exception as e:
@@ -47,7 +52,9 @@ class PhononRecognizer:
 
         if self._initialized and self._model is not None:
             try:
-                text = self._model.transcribe(audio_buffer)
+                # transcribe_array accepts 16 kHz mono float32 numpy array
+                res = self._model.transcribe_array(audio_buffer.astype(np.float32))
+                text = res[0] if isinstance(res, tuple) else str(res)
                 latency = (time.perf_counter() - start_time) * 1000.0
                 return SpeechChunk(
                     text=text.strip(),
