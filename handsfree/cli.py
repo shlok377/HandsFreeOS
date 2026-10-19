@@ -4,6 +4,7 @@ import argparse
 import sys
 import time
 
+import numpy as np
 from rich.console import Console
 
 from handsfree.decision.jev_engine import JevEngine
@@ -99,6 +100,9 @@ def run_live(dry_run: bool = False) -> None:
     screencap = ScreenCapture()
 
     def on_speech_chunk(chunk: SpeechChunk) -> None:
+        if not chunk.text or not chunk.text.strip():
+            return
+
         dashboard.update_speech(chunk)
         dashboard.add_log(f"Heard: '{chunk.text}'")
 
@@ -141,23 +145,45 @@ def run_live(dry_run: bool = False) -> None:
     try:
         import sounddevice as sd
 
+        # Query native input sample rate (typically 48000 Hz on PipeWire/ALSA Linux)
+        try:
+            device_info = sd.query_devices(kind="input")
+            native_sr = int(device_info.get("default_samplerate", 48000)) if device_info else 48000
+        except Exception:
+            native_sr = 48000
+
+        block_duration_s = 0.1  # 100ms frames
+        native_blocksize = int(native_sr * block_duration_s)
+
         def audio_callback(indata, frames, time_info, status):
             if status:
                 pass
-            frame = indata[:, 0].copy()  # Mono float32
-            rms = float(np.sqrt(np.mean(frame**2)))
+            raw_channel = indata[:, 0]
+            # Resample / decimate to 16000 Hz for VAD and Phonon-2
+            if native_sr == 16000:
+                frame_16k = raw_channel.copy()
+            elif native_sr % 16000 == 0:
+                step = native_sr // 16000
+                frame_16k = raw_channel[::step].copy()
+            else:
+                num_target = int(len(raw_channel) * 16000 / native_sr)
+                old_idx = np.linspace(0, len(raw_channel) - 1, len(raw_channel))
+                new_idx = np.linspace(0, len(raw_channel) - 1, num_target)
+                frame_16k = np.interp(new_idx, old_idx, raw_channel).astype(np.float32)
+
+            rms = float(np.sqrt(np.mean(frame_16k**2)))
             dashboard.update_audio_level(rms)
-            audio_stream.feed_frame(frame)
+            audio_stream.feed_frame(frame_16k)
 
         sd_stream = sd.InputStream(
-            samplerate=16000,
+            samplerate=native_sr,
             channels=1,
             dtype="float32",
-            blocksize=1600,
+            blocksize=native_blocksize,
             callback=audio_callback,
         )
         sd_stream.start()
-        dashboard.add_log("Microphone stream opened successfully.")
+        dashboard.add_log(f"Microphone active ({native_sr}Hz -> 16kHz).")
     except Exception as e:
         dashboard.add_log(f"Mic init notice: {e} (Simulated audio mode enabled)")
 
@@ -174,6 +200,7 @@ def run_live(dry_run: bool = False) -> None:
         if sd_stream is not None:
             sd_stream.stop()
             sd_stream.close()
+        audio_stream.stop()
         tts.stop()
 
 

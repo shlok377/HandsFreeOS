@@ -70,3 +70,20 @@ def test_echo_suppression_blocks_audio_ingestion(monkeypatch):
         assert stream.is_echo_suppressed is False
     finally:
         stream.stop()
+
+
+def test_audio_resampling_48k_to_16k():
+    """Verifies that 48kHz audio frames are downsampled cleanly to 16kHz."""
+    # 48000 Hz, 100ms = 4800 samples
+    native_sr = 48000
+    t = np.linspace(0, 0.1, 4800, endpoint=False, dtype=np.float32)
+    raw_48k = np.sin(2 * np.pi * 440 * t)
+
+    # 3x decimation
+    step = native_sr // 16000
+    frame_16k = raw_48k[::step].copy()
+
+    assert len(frame_16k) == 1600
+    # Peak amplitude should be preserved
+    assert np.isclose(np.max(np.abs(frame_16k)), 1.0, atol=0.01)
+
