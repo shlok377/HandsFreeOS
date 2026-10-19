@@ -75,11 +75,104 @@ def run_demo() -> None:
 
 
 def run_live(dry_run: bool = False) -> None:
-    """Starts live daemon and dashboard."""
+    """Starts live daemon, microphone ingestion, and interactive Rich dashboard."""
+    from rich.live import Live
+
     console = Console()
     dashboard = HandsFreeDashboard(console=console)
-    dashboard.add_log("HandsFreeOS daemon initialized.")
-    console.print(dashboard.render())
+    dashboard.add_log("Initializing HandsFreeOS engine...")
+
+    jev = JevEngine()
+    os_ctrl = HyprlandController()
+    input_ctrl = AdaptiveInputController(dry_run=dry_run)
+    grounder = TwoStageGrounder(decision_engine=jev)
+
+    # Initialize audio stream and TTS with echo suppression
+    from handsfree.audio.vad import VoiceActivityDetector
+    from handsfree.audio.stt_phonon import PhononRecognizer
+    from handsfree.audio.audio_stream import ContinuousAudioStream
+    from handsfree.os_layer.screen import ScreenCapture
+
+    vad = VoiceActivityDetector()
+    recognizer = PhononRecognizer()
+    recognizer.load_model()
+    screencap = ScreenCapture()
+
+    def on_speech_chunk(chunk: SpeechChunk) -> None:
+        dashboard.update_speech(chunk)
+        dashboard.add_log(f"Heard: '{chunk.text}'")
+
+        # Capture current screen and active window
+        screenshot = screencap.capture_png_bytes()
+        active_win = os_ctrl.get_active_window()
+        dashboard.update_window(active_win)
+
+        # Process through primary dispatch seam
+        event = dispatcher.process_speech_frame(
+            chunk, screenshot_bytes=screenshot, mock_active_window=active_win
+        )
+
+        dashboard.add_log(f"Action: {event.action_type.value} -> {event.target or ''}")
+        if event.verbal_response:
+            dashboard.tts_status = f"Speaking: '{event.verbal_response}'"
+
+    audio_stream = ContinuousAudioStream(
+        vad=vad, recognizer=recognizer, on_speech_chunk=on_speech_chunk
+    )
+
+    def on_tts_state(is_speaking: bool) -> None:
+        audio_stream.set_echo_suppression(is_speaking)
+        dashboard.tts_status = "Speaking..." if is_speaking else "Idle"
+
+    tts = KokoroTTS(dry_run=dry_run, on_state_change=on_tts_state)
+
+    dispatcher = IntentDispatcher(
+        decision_engine=jev,
+        os_controller=os_ctrl,
+        input_controller=input_ctrl,
+        tts=tts,
+        grounder=grounder,
+    )
+
+    dashboard.add_log("HandsFreeOS is active and listening to microphone.")
+
+    # Try starting live audio capture via sounddevice
+    sd_stream = None
+    try:
+        import sounddevice as sd
+
+        def audio_callback(indata, frames, time_info, status):
+            if status:
+                pass
+            frame = indata[:, 0].copy()  # Mono float32
+            audio_stream.feed_frame(frame)
+
+        sd_stream = sd.InputStream(
+            samplerate=16000,
+            channels=1,
+            dtype="float32",
+            blocksize=1600,
+            callback=audio_callback,
+        )
+        sd_stream.start()
+        dashboard.add_log("Microphone stream opened successfully.")
+    except Exception as e:
+        dashboard.add_log(f"Mic init notice: {e} (Simulated audio mode enabled)")
+
+    try:
+        with Live(dashboard.render(), console=console, refresh_per_second=4) as live:
+            while True:
+                active_win = os_ctrl.get_active_window()
+                dashboard.update_window(active_win)
+                live.update(dashboard.render())
+                time.sleep(0.25)
+    except KeyboardInterrupt:
+        dashboard.add_log("Shutting down HandsFreeOS...")
+    finally:
+        if sd_stream is not None:
+            sd_stream.stop()
+            sd_stream.close()
+        tts.stop()
 
 
 if __name__ == "__main__":
