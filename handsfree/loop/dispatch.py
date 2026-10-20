@@ -107,7 +107,7 @@ class IntentDispatcher:
         active_win = mock_active_window or self.os_controller.get_active_window()
 
         # Handle exit / close yourself / close yourselves
-        if re.search(r"\b(close\s+yourselves|close\s+yourself|exit|quit|shutdown|stop\s+listening|goodbye|bye)\b", cmd_lower):
+        if re.search(r"^(?:please\s+)?(exit|quit|shutdown|stop\s+listening|goodbye|bye)[\.\?!]*$", cmd_lower) or re.search(r"\b(close\s+yourselves|close\s+yourself|shutdown\s+bit|exit\s+bit|quit\s+bit)\b", cmd_lower):
             msg = "Goodbye! Shutting down Bit."
             self.tts.speak(msg)
             llm_op = "action: shutdown"
@@ -258,8 +258,14 @@ class IntentDispatcher:
             target = re.sub(r"^(switch to|focus)\s+", "", command, flags=re.IGNORECASE).strip()
             return self._handle_window_focus(target)
 
-        if cmd_lower in {"close this", "close window", "close"}:
-            return self._handle_close_window(active_win)
+        close_match = re.search(
+            r"^(?:(?:can|could)\s+you\s+(?:please\s+)?|please\s+|where\s+is\s+|hey\s+bit\s+|bit\s+)?(?:close|quit|kill)\s*(?:the\s+|that\s+|this\s+)?([a-zA-Z0-9_\-\s]*?)(?:\s+app|\s+window|\s+please|\s+now)?[\.\?!]*$",
+            cmd_lower,
+        )
+        if close_match:
+            raw_target = close_match.group(1).strip()
+            target = None if not raw_target or raw_target in {"this", "window", "it", "that", "app", "active", "active window", "current", "current window"} else raw_target
+            return self._handle_close_window(active_win, target=target)
 
         # 10. VISUAL NAVIGATION & CLICK GROUNDING ("go to downloads", "click on X", "navigate to Y")
         if re.search(r"\b(click|tap|press|go\s+to|navigate\s+to)\b", cmd_lower):
@@ -510,8 +516,13 @@ class IntentDispatcher:
         if target:
             windows = self.os_controller.get_open_windows() if hasattr(self.os_controller, "get_open_windows") else []
             win_to_close = self.decision_engine.disambiguate_window(windows, target)
-
-        if not win_to_close:
+            if not win_to_close:
+                msg = f"Could not find window for {target}"
+                self.tts.speak(msg)
+                llm_op = f"close_window: not found ({target})"
+                self._set_llm_output(llm_op)
+                return ActionEvent(action_type=ActionType.NOOP, verbal_response=msg, llm_output=llm_op)
+        else:
             win_to_close = active_win
 
         if win_to_close and win_to_close.address:

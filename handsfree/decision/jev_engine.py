@@ -165,17 +165,22 @@ class JevEngine(IDecisionEngine):
         if re.search(r"\bhow\s+many\s+(?:apps|windows|discords|\w+)\b", cleaned):
             return True
 
-        # Check starting word or clause for command verbs
-        words = re.findall(r"\b\w+\b", cleaned)
-        if not words:
-            return False
+        # Check conversational command preambles (e.g. "please close discord", "can you open firefox")
+        effective = re.sub(
+            r"^(?:please\s+|(?:can|could|would)\s+you\s+(?:please\s+)?|where\s+is\s+|i\s+want\s+to\s+)",
+            "",
+            cleaned,
+        ).strip()
 
-        first_word = words[0]
-        if first_word in self.command_verbs:
+        words = re.findall(r"\b\w+\b", effective)
+        if words and words[0] in self.command_verbs:
             return True
 
         # Common multi-word phrases (e.g. "make a new txt file", "can you open", "search for", "go to", "file manager please")
-        if re.search(r"\b(open|launch|make a|create a|switch to|click on|type in|search in|search for|google for|new tab|go to|navigate to|file manager)\b", cleaned):
+        if re.search(
+            r"\b(open|launch|close|quit|kill|make a|create a|switch to|focus|click on|type in|search in|search for|google for|new tab|go to|navigate to|file manager)\b",
+            cleaned,
+        ):
             return True
 
         return False

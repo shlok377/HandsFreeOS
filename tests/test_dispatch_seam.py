@@ -23,6 +23,7 @@ class MockOSController:
         self.windows = [
             WindowInfo(address="0x100", title="WhatsApp - Google Chrome", class_name="google-chrome", is_focused=False),
             WindowInfo(address="0x200", title="Visual Studio Code", class_name="code", is_focused=True),
+            WindowInfo(address="0x300", title="Home", class_name="org.gnome.Nautilus", is_focused=False),
         ]
 
     def get_open_windows(self):
@@ -274,6 +275,41 @@ def test_close_targeted_window_seam(dispatcher, monkeypatch):
     assert event.action_type == ActionType.CLOSE_WINDOW
     assert "0x100" in dispatcher.os_controller.closed_windows
     assert "WhatsApp" in event.verbal_response
+
+
+def test_close_file_manager_seam(dispatcher):
+    """Verifies: 'close file manager' immediately targets and closes Nautilus."""
+    chunk = SpeechChunk(text="close file manager", is_final=True)
+    event = dispatcher.process_speech_frame(chunk)
+    assert event.action_type == ActionType.CLOSE_WINDOW
+    assert "0x300" in dispatcher.os_controller.closed_windows
+    assert "Home" in event.verbal_response
+
+
+def test_where_is_close_file_manager_colloquial_seam(dispatcher):
+    """Verifies: 'Where is close file manager?' closes Nautilus window without falling into error response."""
+    chunk = SpeechChunk(text="Where is close file manager?", is_final=True)
+    event = dispatcher.process_speech_frame(chunk)
+    assert event.action_type == ActionType.CLOSE_WINDOW
+    assert "0x300" in dispatcher.os_controller.closed_windows
+    assert "Home" in event.verbal_response
+
+
+def test_please_close_file_manager_seam(dispatcher):
+    """Verifies: 'please close file manager' closes Nautilus window."""
+    chunk = SpeechChunk(text="please close file manager", is_final=True)
+    event = dispatcher.process_speech_frame(chunk)
+    assert event.action_type == ActionType.CLOSE_WINDOW
+    assert "0x300" in dispatcher.os_controller.closed_windows
+
+
+def test_close_nonexistent_window_safe_noop(dispatcher):
+    """Verifies: closing a non-existent app does NOT close the active window."""
+    chunk = SpeechChunk(text="close spotify", is_final=True)
+    event = dispatcher.process_speech_frame(chunk)
+    assert event.action_type == ActionType.NOOP
+    assert "Could not find window" in event.verbal_response
+    assert "0x200" not in dispatcher.os_controller.closed_windows
 
 
 def test_open_youtube_in_browser_seam(dispatcher):

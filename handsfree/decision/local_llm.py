@@ -97,6 +97,8 @@ class LocalLLMReasoner:
             f"- 'open new tab in my browser' -> {{\"intent\": \"hotkey\", \"target\": [\"ctrl\", \"t\"], \"speech\": \"Opening a new tab\"}}\n"
             f"- 'close this tab' -> {{\"intent\": \"hotkey\", \"target\": [\"ctrl\", \"w\"], \"speech\": \"Closing tab\"}}\n"
             f"- 'close that discord app' or 'close this discord window' -> {{\"intent\": \"close_window\", \"target\": \"discord\", \"speech\": \"Closing Discord\"}}\n"
+            f"- 'where is close file manager?' or 'close file manager' -> {{\"intent\": \"close_window\", \"target\": \"file manager\", \"speech\": \"Closing File Manager\"}}\n"
+            f"- 'please close that discord app' -> {{\"intent\": \"close_window\", \"target\": \"discord\", \"speech\": \"Closing Discord\"}}\n"
             f"- 'open youtube in my browser' -> {{\"intent\": \"open_url\", \"target\": \"https://www.youtube.com\", \"speech\": \"Opening YouTube\"}}\n"
             f"- 'close yourselves' or 'bye bye' or 'quit, quit' or 'exit' -> {{\"intent\": \"shutdown\", \"target\": \"exit\", \"speech\": \"Goodbye! Shutting down Bit.\"}}\n"
             f"- 'how many apps do I have open?' -> {{\"intent\": \"answer_user\", \"target\": \"\", \"speech\": \"You have 2 apps open.\"}}\n"
