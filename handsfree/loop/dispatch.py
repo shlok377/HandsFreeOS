@@ -7,6 +7,7 @@ import shutil
 import urllib.parse
 from typing import Callable, Optional
 
+from handsfree.decision.context_analyzer import AppContextAnalyzer
 from handsfree.decision.local_llm import LocalLLMReasoner
 from handsfree.decision.memory import EpisodicMemoryStore
 from handsfree.domain.interfaces import IDecisionEngine, IOSController, IInputController, ITextToSpeech
@@ -14,6 +15,7 @@ from handsfree.domain.models import ActionEvent, ActionType, SpeechChunk, Window
 from handsfree.loop.interruption import InterruptionCoordinator
 from handsfree.os_layer.discovery import WebDestinationResolver
 from handsfree.vision.grounding import TwoStageGrounder
+from handsfree.vision.scene_cache import SmartSceneCache
 
 logger = logging.getLogger(__name__)
 
@@ -32,6 +34,8 @@ class IntentDispatcher:
         on_llm_output: Optional[Callable[[str], None]] = None,
         destination_resolver: Optional[WebDestinationResolver] = None,
         memory_store: Optional[EpisodicMemoryStore] = None,
+        scene_cache: Optional[SmartSceneCache] = None,
+        context_analyzer: Optional[AppContextAnalyzer] = None,
     ):
         self.decision_engine = decision_engine
         self.os_controller = os_controller
@@ -42,6 +46,8 @@ class IntentDispatcher:
         self.on_llm_output = on_llm_output
         self.destination_resolver = destination_resolver or WebDestinationResolver()
         self.memory_store = memory_store or EpisodicMemoryStore()
+        self.scene_cache = scene_cache
+        self.context_analyzer = context_analyzer or AppContextAnalyzer()
         self.interruption = InterruptionCoordinator(decision_engine, input_controller)
 
         self._pending_confirmation: Optional[ActionEvent] = None
@@ -136,8 +142,19 @@ class IntentDispatcher:
             if screenshot_bytes and hasattr(self.grounder, "detector") and hasattr(self.grounder.detector, "extract_screen_text"):
                 screen_text = self.grounder.detector.extract_screen_text(screenshot_bytes)
 
+            visual_scene = self.scene_cache.get_latest_visual_summary() if self.scene_cache else ""
+            if not visual_scene and screenshot_bytes and self.scene_cache:
+                visual_scene = self.scene_cache.force_refresh(screenshot_bytes)
+
+            act_ctx = self.context_analyzer.analyze_context(active_win, screen_ocr=screen_text).context_label if self.context_analyzer else ""
+
             res = self.local_llm.answer_screen_query(
-                command, active_window=active_win, open_windows=open_wins, screen_ocr=screen_text
+                command,
+                active_window=active_win,
+                open_windows=open_wins,
+                screen_ocr=screen_text,
+                visual_scene=visual_scene,
+                activity_context=act_ctx,
             )
             ans = res.get("answer", "")
             raw = res.get("raw_response", ans)
@@ -565,6 +582,14 @@ class IntentDispatcher:
         clean_target = re.sub(r"^(the\s+)", "", target, flags=re.IGNORECASE).strip()
         img = screenshot_bytes or b""
         coords, tier, latency = self.grounder.locate_target(img, clean_target)
+
+        # Fallback to local VLM for visual icons and graphics if OCR grounding found no match
+        if not coords and img and self.scene_cache and hasattr(self.scene_cache, "vlm"):
+            vlm_coords = self.scene_cache.vlm.locate_icon(img, clean_target)
+            if vlm_coords:
+                coords = vlm_coords
+                tier = 3
+                latency = 500.0
 
         if coords:
             x, y = coords

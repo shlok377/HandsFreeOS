@@ -382,6 +382,64 @@ def test_verbal_correction_invalidates_memory_cache(dispatcher):
     assert dispatcher._last_executed_command is None
 
 
+def test_screen_query_with_visual_scene_and_discord_video_call(dispatcher, monkeypatch):
+    """Verifies that asking 'What do you see on my screen?' fuses Discord video call context + visual scene."""
+    from unittest.mock import MagicMock
+    from handsfree.domain.models import WindowInfo
+
+    mock_scene_cache = MagicMock()
+    mock_scene_cache.get_latest_visual_summary.return_value = "A live video call stream of a smiling woman with Discord chat channels on the side."
+    dispatcher.scene_cache = mock_scene_cache
+
+    discord_win = WindowInfo(
+        address="0x999",
+        title='• Discord | "DSA" | These Two <3',
+        class_name="discord",
+        app_id="discord",
+        is_focused=True,
+    )
+    monkeypatch.setattr(
+        dispatcher.grounder.detector,
+        "extract_screen_text",
+        lambda img: "disconnect | mute | camera | voice-channels | announcements"
+    )
+
+    chunk = SpeechChunk(text="What do you see on my screen?", is_final=True)
+    event = dispatcher.process_speech_frame(
+        chunk, screenshot_bytes=b"fake_discord_screen", mock_active_window=discord_win
+    )
+
+    assert event.action_type == ActionType.ANSWER_USER
+    # Verbal response should reflect video call or discord
+    assert "discord" in event.verbal_response.lower() or "video call" in event.verbal_response.lower()
+
+
+def test_click_grounding_vlm_fallback(dispatcher, monkeypatch):
+    """Verifies fallback to VLM icon grounding when OCR element detection yields no match."""
+    from unittest.mock import MagicMock
+
+    # Stage 1 fails to find icon by text
+    monkeypatch.setattr(
+        dispatcher.grounder,
+        "locate_target",
+        lambda img, target: (None, "none", 15.0)
+    )
+
+    mock_vlm = MagicMock()
+    mock_vlm.locate_icon.return_value = (450, 620)
+    mock_scene_cache = MagicMock()
+    mock_scene_cache.vlm = mock_vlm
+    dispatcher.scene_cache = mock_scene_cache
+
+    chunk = SpeechChunk(text="click the camera icon", is_final=True)
+    event = dispatcher.process_speech_frame(chunk, screenshot_bytes=b"dummy_icon_png")
+
+    assert event.action_type == ActionType.CLICK_BOX
+    assert event.target == "(450, 620)"
+    assert event.payload["tier"] == 3
+    assert dispatcher.input_controller.history[-1]["target"] == (450, 620)
+
+
 
 
 

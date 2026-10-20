@@ -12,6 +12,7 @@ from rich.console import Console
 from handsfree.decision.jev_engine import JevEngine
 from handsfree.domain.models import ActionType, SpeechChunk
 from handsfree.loop.dispatch import IntentDispatcher
+from handsfree.decision.context_analyzer import AppContextAnalyzer
 from handsfree.os_layer.hyprland import HyprlandController
 from handsfree.os_layer.input_controller import AdaptiveInputController
 from handsfree.os_layer.lock import SingleInstanceLock
@@ -21,6 +22,8 @@ from handsfree.os_layer.tunnel import ReverseTunnelManager
 from handsfree.ui.tui import HandsFreeDashboard
 from handsfree.ui.visual_server import VisualStreamServer
 from handsfree.vision.grounding import TwoStageGrounder
+from handsfree.vision.local_vlm import LocalVLMClient
+from handsfree.vision.scene_cache import SmartSceneCache
 from handsfree.vision.stream_hub import VisualStreamHub
 from handsfree.voice.tts_kokoro import KokoroTTS
 
@@ -195,6 +198,7 @@ def run_live(
     sd_stream = None
     audio_stream = None
     tts = None
+    scene_cache = None
     live_stop_stream = threading.Event()
     shutdown_event = threading.Event()
 
@@ -235,6 +239,10 @@ def run_live(
         recognizer = PhononRecognizer()
         recognizer.load_model()
         screencap = ScreenCapture()
+        vlm_client = LocalVLMClient()
+        scene_cache = SmartSceneCache(vlm_client=vlm_client)
+        scene_cache.start_background_poller(screencap.capture_png_bytes)
+        context_analyzer = AppContextAnalyzer()
 
         def on_speech_chunk(chunk: SpeechChunk) -> None:
             if not chunk.text or not chunk.text.strip():
@@ -288,6 +296,8 @@ def run_live(
             input_controller=input_ctrl,
             tts=tts,
             grounder=grounder,
+            scene_cache=scene_cache,
+            context_analyzer=context_analyzer,
             on_llm_output=dashboard.update_llm_output,
         )
 
@@ -395,6 +405,11 @@ def run_live(
         if audio_stream is not None:
             try:
                 audio_stream.stop()
+            except Exception:
+                pass
+        if scene_cache is not None:
+            try:
+                scene_cache.stop()
             except Exception:
                 pass
         if tts is not None:

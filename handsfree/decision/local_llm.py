@@ -165,28 +165,36 @@ class LocalLLMReasoner:
         active_window: Optional[WindowInfo] = None,
         open_windows: Optional[List[WindowInfo]] = None,
         screen_ocr: str = "",
+        visual_scene: str = "",
+        activity_context: str = "",
     ) -> Dict[str, str]:
-        """Answers questions about what is on screen using local desktop metadata and OCR."""
+        """Answers questions about what is on screen using visual scene perception, activity context, and OCR."""
         win_title = active_window.title if active_window else "Desktop"
         win_cls = active_window.class_name if active_window else ""
 
         prompt = (
             f"You are Bit, a friendly hands-free voice assistant controlling the user's Linux PC.\n"
             f"The user is speaking to you aloud and asked: \"{question}\"\n\n"
-            f"Active App: {win_title} ({win_cls})\n"
         )
+        if activity_context:
+            prompt += f"User Current Activity: {activity_context}\n"
+        prompt += f"Active App: {win_title} ({win_cls})\n"
+
+        if visual_scene:
+            prompt += f"Visual Scene (what the camera/screen visually shows): {visual_scene[:450]}\n"
         if screen_ocr:
-            prompt += f"Detected On Screen: {screen_ocr[:600]}\n\n"
+            prompt += f"Detected On-Screen Text & Labels: {screen_ocr[:500]}\n"
         elif open_windows:
             open_wins = ", ".join([f"'{w.title}'" for w in open_windows[:6]])
-            prompt += f"Open Windows: {open_wins}\n\n"
+            prompt += f"Open Windows: {open_wins}\n"
 
         prompt += (
-            "Task: Answer the user directly in 1 short spoken sentence in first person ('I see...'). "
-            "Name the visible items, folders, or files naturally. Never refer to the user in the third person (never say 'The user' or 'The active window is').\n\n"
-            "Example:\n"
-            "User: 'What do you see?'\n"
-            "Bit: 'In your Home folder, I see Documents, Downloads, Music, Pictures, Projects, and Videos.'\n\n"
+            "\nTask: Answer the user directly in 1 or 2 natural spoken sentences in first person ('I see...', 'You are on...').\n"
+            "Mention both the application context and the visual presence of the person or video stream, as well as visible channels or text.\n"
+            "Never refer to the user in the third person (never say 'The user' or 'The user's screen').\n\n"
+            "Examples:\n"
+            "- If in a Discord call with video visible: 'I see you are on a Discord video call with someone on screen, with your server channels visible on the side.'\n"
+            "- If in file manager: 'In your Home folder, I see your Documents, Downloads, Music, Pictures, and Projects folders.'\n\n"
             f"User: '{question}'\n"
             "Bit:"
         )
@@ -208,7 +216,11 @@ class LocalLLMReasoner:
                 ans = re.sub(r'^(?:Bit:\s*|["\'])', '', ans).rstrip('"\')')
                 return {"answer": ans, "raw_response": ans}
         except Exception as e:
-            if screen_ocr:
+            if activity_context:
+                fallback = f"You are {activity_context} in '{win_title}'."
+            elif visual_scene:
+                fallback = f"On your screen, {visual_scene[:120]}."
+            elif screen_ocr:
                 fallback = f"In your {win_title} window, I see {screen_ocr[:100]} on your screen."
             else:
                 fallback = f"You are viewing '{win_title}'."
