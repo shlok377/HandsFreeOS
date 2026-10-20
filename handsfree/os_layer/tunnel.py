@@ -1,13 +1,25 @@
-"""Automated zero-config reverse SSH tunnel for phone access over public internet/mobile data."""
-
+import atexit
+import ctypes
 import logging
+import os
 import re
+import signal
 import subprocess
 import threading
 import time
 from typing import Optional
 
 logger = logging.getLogger(__name__)
+
+
+def _set_pdeathsig():
+    """Ensure child process dies when parent process exits."""
+    try:
+        libc = ctypes.CDLL("libc.so.6")
+        # PR_SET_PDEATHSIG = 1
+        libc.prctl(1, signal.SIGTERM)
+    except Exception:
+        pass
 
 
 class ReverseTunnelManager:
@@ -20,6 +32,7 @@ class ReverseTunnelManager:
         self.proc: Optional[subprocess.Popen] = None
         self.public_url: Optional[str] = None
         self._reader_thread: Optional[threading.Thread] = None
+        atexit.register(self.stop)
 
     def extract_url_from_line(self, line: str) -> Optional[str]:
         """Scans output stream line for public HTTPS tunnel domain."""
@@ -45,6 +58,7 @@ class ReverseTunnelManager:
                 stderr=subprocess.STDOUT,
                 text=True,
                 bufsize=1,
+                preexec_fn=_set_pdeathsig,
             )
         except Exception as e:
             logger.warning(f"Failed to launch SSH tunnel: {e}")
@@ -53,9 +67,10 @@ class ReverseTunnelManager:
         # Read lines looking for the URL within timeout
         start_t = time.time()
         while time.time() - start_t < timeout:
-            if self.proc.poll() is not None:
+            proc = self.proc
+            if proc is None or proc.poll() is not None:
                 break
-            line = self.proc.stdout.readline() if self.proc.stdout else ""
+            line = proc.stdout.readline() if proc.stdout else ""
             if not line:
                 time.sleep(0.1)
                 continue

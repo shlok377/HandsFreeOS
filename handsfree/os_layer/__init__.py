@@ -6,6 +6,7 @@ from handsfree.os_layer.input_controller import AdaptiveInputController
 from handsfree.os_layer.network_discovery import NetworkDiscovery
 from handsfree.os_layer.screen import ScreenCapture
 from handsfree.os_layer.tunnel import ReverseTunnelManager
+from handsfree.os_layer.lock import SingleInstanceLock
 
 __all__ = [
     "HyprlandController",
@@ -14,4 +15,5 @@ __all__ = [
     "AdaptiveInputController",
     "NetworkDiscovery",
     "ReverseTunnelManager",
+    "SingleInstanceLock",
 ]
