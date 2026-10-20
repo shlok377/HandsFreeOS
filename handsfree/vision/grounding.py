@@ -8,6 +8,7 @@ from handsfree.domain.interfaces import IDecisionEngine
 from handsfree.domain.models import BoundingBox
 from handsfree.vision.omniparser import OmniParserDetector
 from handsfree.vision.vlm_fallback import MultimodalVLMFallback
+from handsfree.vision.stream_hub import VisualStreamHub
 
 logger = logging.getLogger(__name__)
 
@@ -20,10 +21,12 @@ class TwoStageGrounder:
         decision_engine: IDecisionEngine,
         detector: Optional[OmniParserDetector] = None,
         vlm_fallback: Optional[MultimodalVLMFallback] = None,
+        stream_hub: Optional[VisualStreamHub] = None,
     ):
         self.decision_engine = decision_engine
         self.detector = detector or OmniParserDetector()
         self.vlm_fallback = vlm_fallback or MultimodalVLMFallback()
+        self.stream_hub = stream_hub
 
     def locate_target(
         self, image_bytes: bytes, target_phrase: str
@@ -38,6 +41,10 @@ class TwoStageGrounder:
 
         # Step 1: Detect interactive elements with YOLO
         boxes = self.detector.detect_elements(image_bytes)
+
+        if self.stream_hub is not None and image_bytes:
+            detection_latency = (time.perf_counter() - start_time) * 1000.0
+            self.stream_hub.update_frame(image_bytes, boxes, latency_ms=detection_latency)
 
         if boxes:
             # Stage 1: Try fast Jev match (<40ms)
