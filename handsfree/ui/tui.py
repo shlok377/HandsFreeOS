@@ -88,8 +88,8 @@ def generate_inward_spectrum_box(
     """Generates a rectangle audio visualizer whose standing sides project bar graphs inward.
 
     - width x height rectangle with rounded corners
-    - input_level <= 0.2: Calm state with subtle boundary ticks
-    - input_level > 0.2: Left and right vertical walls project frequency bar graphs inward
+    - input_level <= 0.02: Calm state with subtle boundary ticks
+    - input_level > 0.02: Left and right vertical walls project frequency bar graphs inward
     - Frequency mapping: bottom rows = bass (100-500Hz), middle rows = vocal formants, top rows = treble
     """
     inner_w = max(10, width - 2)
@@ -98,17 +98,17 @@ def generate_inward_spectrum_box(
     top_border = "╭" + "─" * inner_w + "╮"
     bot_border = "╰" + "─" * inner_w + "╯"
 
-    # Calm state when input <= 0.2
-    if input_level <= 0.2:
-        tick_l = "▏" if input_level > 0.02 else " "
-        tick_r = "▕" if input_level > 0.02 else " "
+    # Calm state when input <= 0.02
+    if input_level <= 0.02:
+        tick_l = "▏" if input_level > 0.003 else " "
+        tick_r = "▕" if input_level > 0.003 else " "
         gap = " " * (inner_w - 2)
         calm_row = f"│{tick_l}{gap}{tick_r}│"
         return [top_border] + [calm_row] * inner_h + [bot_border]
 
-    # Active state when input > 0.2
+    # Active state when input > 0.02
     max_bar_cols = max(1, (inner_w // 2) - 1)
-    excess_norm = min(1.0, (input_level - 0.2) / 0.5)
+    excess_norm = min(1.0, (input_level - 0.02) / 0.06)
 
     # Map frequency spectrum to rows (bottom = bass, top = treble)
     row_energies: List[float] = []
@@ -355,7 +355,7 @@ class HandsFreeDashboard:
             else:
                 t.append("│", style="#3882a5")
                 inner = line[1:-1]
-                if self.mic_level <= 0.2:
+                if self.mic_level <= 0.02:
                     t.append(inner, style="dim #22d3ee")
                 else:
                     mid_idx = len(inner) // 2

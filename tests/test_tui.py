@@ -14,14 +14,14 @@ from handsfree.ui.tui import (
 
 
 def test_inward_spectrum_box_calm_mode():
-    box_lines = generate_inward_spectrum_box(input_level=0.08, width=56, height=10)
+    box_lines = generate_inward_spectrum_box(input_level=0.01, width=56, height=10)
     assert len(box_lines) == 10
     top = box_lines[0]
     bot = box_lines[-1]
     assert top.startswith("╭") and top.endswith("╮")
     assert bot.startswith("╰") and bot.endswith("╯")
 
-    # In calm mode (<= 0.2), inner rows must stay calm with faint ticks and no deep blocks
+    # In calm mode (<= 0.02), inner rows must stay calm with faint ticks and no deep blocks
     inner_rows = box_lines[1:-1]
     for row in inner_rows:
         assert row.startswith("│") and row.endswith("│")
@@ -31,10 +31,10 @@ def test_inward_spectrum_box_calm_mode():
 
 
 def test_inward_spectrum_box_active_mode():
-    box_lines = generate_inward_spectrum_box(input_level=0.55, width=56, height=10)
+    box_lines = generate_inward_spectrum_box(input_level=0.05, width=56, height=10)
     assert len(box_lines) == 10
     inner_rows = box_lines[1:-1]
-    # In active mode (> 0.2), vertical walls project block bars inward
+    # In active mode (> 0.02), vertical walls project block bars inward
     has_inward_blocks = any("█" in row or "▉" in row or "▊" in row for row in inner_rows)
     assert has_inward_blocks
 
