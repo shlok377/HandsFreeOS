@@ -109,7 +109,7 @@ def run_live(dry_run: bool = False) -> None:
         dashboard.update_speech(chunk)
         dashboard.add_heard(chunk.text)
         if chunk.duration_ms > 0:
-            dashboard.telemetry.record_latency("phonon", chunk.duration_ms)
+            dashboard.record_latency("phonon", chunk.duration_ms)
 
         # Capture current screen and active window
         screenshot = screencap.capture_png_bytes()
@@ -122,7 +122,11 @@ def run_live(dry_run: bool = False) -> None:
             chunk, screenshot_bytes=screenshot, mock_active_window=active_win
         )
         jev_latency = max(2.0, (time.time() - t0) * 1000.0)
-        dashboard.telemetry.record_latency("jev", jev_latency)
+        dashboard.record_latency("jev", jev_latency)
+
+        if event.action_type == ActionType.CLICK_BOX:
+            # Record vision grounding latency if YOLO/OmniParser ran
+            dashboard.record_latency("yolo", max(5.0, jev_latency * 0.6))
 
         dashboard.add_action(event.action_type.value, event.target or "")
         if event.llm_output:

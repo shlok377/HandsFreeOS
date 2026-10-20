@@ -141,7 +141,7 @@ class TelemetryCollector:
         return self._cached_gpu_metrics
 
     def _read_battery(self) -> Tuple[int, bool]:
-        """Reads battery capacity and charging status from Linux sysfs."""
+        """Reads battery capacity and charging status from Linux sysfs (BAT* or AC*)."""
         bat_paths = glob.glob("/sys/class/power_supply/BAT*")
         for bat in bat_paths:
             cap_file = os.path.join(bat, "capacity")
@@ -157,6 +157,19 @@ class TelemetryCollector:
                     return pct, charging
                 except Exception:
                     continue
+
+        # If no battery found, check for AC adapter status (desktop/server)
+        ac_paths = glob.glob("/sys/class/power_supply/AC*")
+        for ac in ac_paths:
+            online_file = os.path.join(ac, "online")
+            if os.path.exists(online_file):
+                try:
+                    with open(online_file, "r", encoding="utf-8") as f:
+                        is_online = int(f.read().strip()) == 1
+                    return 100, is_online
+                except Exception:
+                    pass
+
         return 100, False
 
     def record_latency(self, stage: str, latency_ms: float) -> None:

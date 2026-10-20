@@ -82,11 +82,22 @@ def generate_waveform(rms: float, width: int = 42) -> Tuple[str, str, str]:
     return f"[{''.join(top_buf)}]", f"[{''.join(mid_buf)}]", f"[{''.join(bot_buf)}]"
 
 
+from collections import deque
+from enum import Enum
+
+
+class ActionLogKind(str, Enum):
+    """Categorized action execution event kinds."""
+    HEARD = "HEARD"
+    ACTION = "ACTION"
+    SYS = "SYS"
+
+
 class ActionLogEntry:
     """Structured entry in the action execution history."""
 
-    def __init__(self, kind: str, message: str, target: str = "", timestamp: Optional[str] = None):
-        self.kind = kind  # "HEARD", "ACTION", "SYS"
+    def __init__(self, kind: ActionLogKind, message: str, target: str = "", timestamp: Optional[str] = None):
+        self.kind = kind
         self.message = message
         self.target = target
         self.timestamp = timestamp or time.strftime("%H:%M:%S")
@@ -108,7 +119,7 @@ class HandsFreeDashboard:
             class_name="com.mitchellh.ghostty",
             is_focused=True,
         )
-        self.action_entries: List[ActionLogEntry] = []
+        self.action_entries: deque[ActionLogEntry] = deque(maxlen=50)
         self.tts_status: str = "IDLE"
         self.mic_level: float = 0.013
         self.llm_output: str = json.dumps(
@@ -138,6 +149,10 @@ class HandsFreeDashboard:
             Layout(name="action_log", ratio=1),
             Layout(name="telemetry", size=8),
         )
+
+    def record_latency(self, stage: str, latency_ms: float) -> None:
+        """Records a model pipeline execution latency (phonon, jev, yolo)."""
+        self.telemetry.record_latency(stage, latency_ms)
 
     def update_speech(self, chunk: SpeechChunk) -> None:
         """Updates streaming transcript display."""
@@ -170,15 +185,11 @@ class HandsFreeDashboard:
 
     def add_heard(self, text: str) -> None:
         """Adds a spoken user transcription log entry."""
-        self.action_entries.append(ActionLogEntry(kind="HEARD", message=text))
-        if len(self.action_entries) > 50:
-            self.action_entries.pop(0)
+        self.action_entries.append(ActionLogEntry(kind=ActionLogKind.HEARD, message=text))
 
     def add_action(self, action_name: str, target: str = "") -> None:
         """Adds an executed system action log entry."""
-        self.action_entries.append(ActionLogEntry(kind="ACTION", message=action_name, target=target))
-        if len(self.action_entries) > 50:
-            self.action_entries.pop(0)
+        self.action_entries.append(ActionLogEntry(kind=ActionLogKind.ACTION, message=action_name, target=target))
 
     def add_log(self, message: str) -> None:
         """Compatibility log method that categorizes incoming raw messages."""
@@ -191,9 +202,7 @@ class HandsFreeDashboard:
             target = parts[1].strip() if len(parts) > 1 else ""
             self.add_action(action_name, target)
         else:
-            self.action_entries.append(ActionLogEntry(kind="SYS", message=message))
-            if len(self.action_entries) > 50:
-                self.action_entries.pop(0)
+            self.action_entries.append(ActionLogEntry(kind=ActionLogKind.SYS, message=message))
 
     def _render_perception_panel(self) -> Panel:
         """Renders the Left Panel: PERCEPTION & DECISION."""
@@ -226,16 +235,24 @@ class HandsFreeDashboard:
 
         # 4. State & Window Indicators
         jev_text = Text()
-        jev_text.append("Jev State:      ", style="bold white")
-        jev_text.append("● ", style="bold #4ade80")
-        jev_text.append("STANDBY ", style="bold #4ade80")
-        jev_text.append("(<30ms System-1)", style="dim white")
+        if self.last_decision:
+            conf_pct = self.last_decision.confidence * 100.0
+            jev_text.append("Jev Decision:   ", style="bold white")
+            jev_text.append("● ", style="bold #4ade80")
+            jev_text.append(f"{self.last_decision.decision_type.upper()} ", style="bold #4ade80")
+            jev_text.append(f"({self.last_decision.value}) [{conf_pct:.0f}% {self.last_decision.latency_ms:.1f}ms]", style="dim white")
+        else:
+            jev_text.append("Jev State:      ", style="bold white")
+            jev_text.append("● ", style="bold #4ade80")
+            jev_text.append("STANDBY ", style="bold #4ade80")
+            jev_text.append("(<30ms System-1)", style="dim white")
         table.add_row(jev_text)
 
         win_title = self.active_window.title if self.active_window else "None"
         win_cls = self.active_window.class_name if self.active_window else "None"
         win_text = Text()
         win_text.append("Active Window:  ", style="bold white")
+        win_text.append("● ", style="bold #38bdf8")
         win_text.append(f"{win_title} ", style="#94a3b8")
         win_text.append(f"({win_cls})", style="#64748b")
         table.add_row(win_text)
@@ -293,17 +310,22 @@ class HandsFreeDashboard:
 
         # Show the most recent 12 entries to fill the upper-right panel
         rows_to_display = 12
-        visible_entries = self.action_entries[-rows_to_display:] if self.action_entries else []
+        all_entries = list(self.action_entries)
+        visible_entries = all_entries[-rows_to_display:] if all_entries else []
+
+        total_count = max(1, len(self.action_entries))
+        # Dynamically compute slider thumb position based on buffer usage
+        thumb_idx = min(rows_to_display - 2, max(1, int(round((len(visible_entries) / total_count) * (rows_to_display - 3)))))
 
         for i in range(rows_to_display):
             line_text = Text()
             if i < len(visible_entries):
                 entry = visible_entries[i]
                 line_text.append(f"[{entry.timestamp}] ", style="#64748b")
-                if entry.kind == "HEARD":
+                if entry.kind == ActionLogKind.HEARD:
                     line_text.append("HEARD  ", style="bold #38bdf8")
                     line_text.append(f'"{entry.message}"', style="white")
-                elif entry.kind == "ACTION":
+                elif entry.kind == ActionLogKind.ACTION:
                     line_text.append("ACTION ", style="bold #4ade80")
                     line_text.append(f"{entry.message}", style="white")
                     if entry.target:
@@ -313,13 +335,12 @@ class HandsFreeDashboard:
                 else:
                     line_text.append(entry.message, style="dim white")
 
-            # Stylized right scrollbar track matching reference UI
+            # Stylized right scrollbar track
             if i == 0:
-                scroll_indicator = Text("1", style="#475569")
+                scroll_indicator = Text("▲", style="#475569")
             elif i == rows_to_display - 1:
-                scroll_indicator = Text("1", style="#475569")
-            elif i in {1, 2}:
-                # Slider position indicator
+                scroll_indicator = Text("▼", style="#475569")
+            elif i in {thumb_idx, thumb_idx + 1}:
                 scroll_indicator = Text("█", style="#94a3b8")
             else:
                 scroll_indicator = Text("│", style="#334155")

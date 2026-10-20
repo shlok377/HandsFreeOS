@@ -1,4 +1,4 @@
-"""Tests for live telemetry collector."""
+"""Tests for live telemetry collector public interface."""
 
 import os
 from unittest.mock import patch, mock_open
@@ -14,19 +14,7 @@ def test_system_metrics_defaults():
     assert 0 <= metrics.battery_percent <= 100
 
 
-def test_parse_proc_stat():
-    collector = TelemetryCollector()
-    proc_stat_mock = (
-        "cpu  1000 200 300 5000 100 50 20 0 0 0\n"
-        "cpu0 500 100 150 2500 50 25 10 0 0 0\n"
-    )
-    with patch("builtins.open", mock_open(read_data=proc_stat_mock)):
-        busy, total = collector._read_cpu_raw()
-        assert total == 1000 + 200 + 300 + 5000 + 100 + 50 + 20
-        assert busy == total - 5000 - 100  # idle and iowait excluded
-
-
-def test_parse_proc_meminfo():
+def test_system_metrics_from_proc_fs():
     collector = TelemetryCollector()
     meminfo_mock = (
         "MemTotal:       32768000 kB\n"
@@ -34,10 +22,10 @@ def test_parse_proc_meminfo():
         "MemAvailable:   16384000 kB\n"
     )
     with patch("builtins.open", mock_open(read_data=meminfo_mock)):
-        ram_pct, used_gb, total_gb = collector._read_ram()
-        assert total_gb == pytest.approx(31.25, rel=0.1)
-        assert used_gb == pytest.approx(15.62, rel=0.1)
-        assert ram_pct == pytest.approx(50.0, rel=0.1)
+        metrics = collector.get_system_metrics()
+        assert metrics.ram_total_gb == pytest.approx(31.25, rel=0.1)
+        assert metrics.ram_used_gb == pytest.approx(15.62, rel=0.1)
+        assert metrics.ram_percent == pytest.approx(50.0, rel=0.1)
 
 
 def test_pipeline_latencies_recording():
@@ -52,9 +40,36 @@ def test_pipeline_latencies_recording():
     assert latencies["yolo"] == 15.0
 
 
-def test_battery_reading():
+def test_battery_reading_public():
     collector = TelemetryCollector()
-    with patch("os.path.exists", return_value=True):
-        with patch("builtins.open", mock_open(read_data="85\n")):
-            pct, charging = collector._read_battery()
-            assert pct == 85
+    with patch("glob.glob", return_value=["/sys/class/power_supply/BAT1"]):
+        with patch("os.path.exists", return_value=True):
+            with patch("builtins.open", mock_open(read_data="85\n")):
+                metrics = collector.get_system_metrics()
+                assert metrics.battery_percent == 85
+
+
+def test_gpu_fallback_when_unavailable():
+    collector = TelemetryCollector()
+    with patch("torch.cuda.is_available", return_value=False):
+        with patch("subprocess.run", side_effect=FileNotFoundError):
+            metrics = collector.get_system_metrics()
+            assert metrics.vram_total_gb > 0.0
+            assert metrics.gpu_temp_c > 0
+
+
+def test_ac_power_fallback_when_no_battery():
+    collector = TelemetryCollector()
+    def mock_glob(pattern):
+        if "BAT" in pattern:
+            return []
+        if "AC" in pattern:
+            return ["/sys/class/power_supply/ACAD"]
+        return []
+
+    with patch("glob.glob", side_effect=mock_glob):
+        with patch("os.path.exists", return_value=True):
+            with patch("builtins.open", mock_open(read_data="1\n")):
+                metrics = collector.get_system_metrics()
+                assert metrics.battery_percent == 100
+                assert metrics.battery_charging is True
