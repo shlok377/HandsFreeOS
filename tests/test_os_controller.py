@@ -169,3 +169,13 @@ def test_hyprland_controller_focus_window_switches_workspace(monkeypatch):
     assert ["dispatch", "workspace", "2"] in dispatched
     assert ["dispatch", "focuswindow", "address:0xabc"] in dispatched
 
+
+def test_adaptive_input_double_click():
+    """Verifies that double_click is properly tracked in history and dispatched."""
+    controller = AdaptiveInputController(current_pos=(100, 100), dry_run=True)
+    controller.move_and_click(450, 450, is_browser=False, double_click=True)
+
+    assert controller.history[-1]["action"] == "click"
+    assert controller.history[-1]["target"] == (450, 450)
+    assert controller.history[-1]["double_click"] is True
+

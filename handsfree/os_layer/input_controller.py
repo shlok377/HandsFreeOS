@@ -31,7 +31,9 @@ class AdaptiveInputController(IInputController):
         """Clears abort signal for new tasks."""
         self._abort_event.clear()
 
-    def move_and_click(self, x: int, y: int, is_browser: bool = False) -> None:
+    def move_and_click(
+        self, x: int, y: int, is_browser: bool = False, double_click: bool = False
+    ) -> None:
         """Executes a move and click.
 
         If is_browser is True: Moves along organic Bézier path, pauses, clicks,
@@ -59,19 +61,20 @@ class AdaptiveInputController(IInputController):
             dwell_down = random.uniform(0.06, 0.12)
             time.sleep(dwell_down)
 
-            self._emit_click(x, y, dwell_down)
+            self._emit_click(x, y, dwell_down, double_click=double_click)
         else:
-            logger.info(f"Desktop mode: Instant click at ({x}, {y})")
+            logger.info(f"Desktop mode: Instant click at ({x}, {y}) (double_click={double_click})")
             if self._abort_event.is_set():
                 return
             self._emit_mouse_move(x, y)
-            self._emit_click(x, y, 0.01)
+            self._emit_click(x, y, 0.02, double_click=double_click)
 
         self.current_pos = (x, y)
         self.history.append({
             "action": "click",
             "target": (x, y),
-            "is_browser": is_browser
+            "is_browser": is_browser,
+            "double_click": double_click,
         })
 
     def type_text(self, text: str, is_browser: bool = False) -> None:
@@ -145,18 +148,74 @@ class AdaptiveInputController(IInputController):
             logger.warning(f"Failed to dispatch hotkey via wtype: {e}")
 
     def _emit_mouse_move(self, x: int, y: int) -> None:
-        """Emits mouse movement to OS."""
+        """Emits mouse movement to OS via Hyprland IPC or ydotool."""
         if self.dry_run:
             return
-        # In Wayland, can be dispatched via ydotool, uinput, or hyprctl cursor
-        # If no uinput daemon is active, fallback to dry-run or wtype
-        pass
 
-    def _emit_click(self, x: int, y: int, dwell_seconds: float) -> None:
-        """Emits mouse down and mouse up."""
+        # 1. Hyprland compositor native cursor positioning
+        try:
+            res = subprocess.run(
+                ["hyprctl", "dispatch", f'hl.dsp.cursor.move({{ x = {int(x)}, y = {int(y)} }})'],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            if "ok" in res.stdout:
+                return
+        except Exception:
+            pass
+
+        # 2. Fallback: ydotool if installed
+        if shutil.which("ydotool"):
+            try:
+                subprocess.run(
+                    ["ydotool", "mousemove", "--absolute", "-x", str(int(x)), "-y", str(int(y))],
+                    check=False,
+                    capture_output=True,
+                )
+            except Exception:
+                pass
+
+    def _emit_click(self, x: int, y: int, dwell_seconds: float, double_click: bool = False) -> None:
+        """Emits mouse down and mouse up, optionally executing double-click."""
         if self.dry_run:
             return
-        pass
+
+        def _click_once() -> bool:
+            # Try Hyprland compositor native mouse click
+            try:
+                p1 = subprocess.run(
+                    ["hyprctl", "dispatch", 'hl.dsp.send_key_state({ mods = "", key = "mouse:272", state = "down" })'],
+                    capture_output=True,
+                    text=True,
+                    check=False,
+                )
+                time.sleep(max(0.02, dwell_seconds))
+                p2 = subprocess.run(
+                    ["hyprctl", "dispatch", 'hl.dsp.send_key_state({ mods = "", key = "mouse:272", state = "up" })'],
+                    capture_output=True,
+                    text=True,
+                    check=False,
+                )
+                if "ok" in p1.stdout and "ok" in p2.stdout:
+                    return True
+            except Exception:
+                pass
+
+            # Fallback: ydotool click 0xC0 (left click)
+            if shutil.which("ydotool"):
+                try:
+                    subprocess.run(["ydotool", "click", "0xC0"], check=False, capture_output=True)
+                    return True
+                except Exception:
+                    pass
+
+            return False
+
+        _click_once()
+        if double_click:
+            time.sleep(0.06)
+            _click_once()
 
     def _emit_key(self, char: str) -> None:
         """Emits single key press via wtype if available."""

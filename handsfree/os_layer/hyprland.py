@@ -90,9 +90,11 @@ class HyprlandController(IOSController):
             return None
 
     def focus_window(self, address_or_class: str) -> bool:
-        """Focuses target window via `hyprctl dispatch focuswindow` and switches workspace if needed."""
+        """Focuses target window via Hyprland IPC, supporting legacy and modern Lua dispatch."""
         if not address_or_class:
             return False
+
+        target_str = f"address:{address_or_class}" if address_or_class.startswith("0x") else address_or_class
 
         try:
             windows = self.get_open_windows()
@@ -104,28 +106,41 @@ class HyprlandController(IOSController):
         except Exception as e:
             logger.debug(f"Failed to lookup workspace for window {address_or_class}: {e}")
 
-        if address_or_class.startswith("0x"):
-            out = self._run_hyprctl(["dispatch", "focuswindow", f"address:{address_or_class}"])
-        else:
-            out = self._run_hyprctl(["dispatch", "focuswindow", address_or_class])
-        return "ok" in out.lower() or out == ""
+        out = self._run_hyprctl(["dispatch", "focuswindow", target_str])
+        if "ok" in out.lower() or out == "":
+            return True
+
+        # Modern Hyprland 0.56+ Lua dispatch fallback (triggered when legacy dispatch fails in Lua mode)
+        if "shorthand for hl.dispatch" in out.lower() or "hl.dispatch: expected" in out.lower() or "expected near" in out.lower():
+            lua_out = self._run_hyprctl(["dispatch", f'hl.dsp.focus({{ window = "{target_str}" }})'])
+            return "ok" in lua_out.lower() or lua_out == ""
+
+        return False
 
     def close_window(self, address_or_class: str = "") -> bool:
-        """Closes target window via `hyprctl dispatch closewindow` with fallback to `killactive`."""
-        out = ""
-        if address_or_class.startswith("0x"):
-            out = self._run_hyprctl(["dispatch", "closewindow", f"address:{address_or_class}"])
-        elif address_or_class:
-            out = self._run_hyprctl(["dispatch", "closewindow", address_or_class])
+        """Closes target window via Hyprland IPC, supporting legacy and modern Lua dispatch."""
+        target_str = f"address:{address_or_class}" if address_or_class.startswith("0x") else address_or_class
+
+        if target_str:
+            out = self._run_hyprctl(["dispatch", "closewindow", target_str])
         else:
             out = self._run_hyprctl(["dispatch", "killactive"])
 
-        # Fallback to killactive if targeted close failed
-        if "error" in out.lower() or ("ok" not in out.lower() and out != ""):
-            fallback_out = self._run_hyprctl(["dispatch", "killactive"])
-            return "ok" in fallback_out.lower() or fallback_out == ""
+        if "ok" in out.lower() or out == "":
+            return True
 
-        return "ok" in out.lower() or out == ""
+        # Modern Hyprland 0.56+ Lua dispatch fallback (triggered when legacy dispatch fails in Lua mode)
+        if "shorthand for hl.dispatch" in out.lower() or "hl.dispatch: expected" in out.lower() or "expected near" in out.lower():
+            if target_str:
+                lua_out = self._run_hyprctl(["dispatch", f'hl.dsp.window.close({{ window = "{target_str}" }})'])
+            else:
+                lua_out = self._run_hyprctl(["dispatch", "hl.dsp.window.close()"])
+            if "ok" in lua_out.lower() or lua_out == "":
+                return True
+
+        # Fallback to killactive if targeted close failed
+        fallback_out = self._run_hyprctl(["dispatch", "killactive"])
+        return "ok" in fallback_out.lower() or fallback_out == ""
 
     def launch_app(self, command: str) -> bool:
         """Launches application via `hyprctl dispatch exec` or subprocess."""

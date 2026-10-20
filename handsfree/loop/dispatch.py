@@ -269,9 +269,10 @@ class IntentDispatcher:
 
         # 10. VISUAL NAVIGATION & CLICK GROUNDING ("go to downloads", "click on X", "navigate to Y")
         if re.search(r"\b(click|tap|press|go\s+to|navigate\s+to)\b", cmd_lower):
+            is_navigation = bool(re.search(r"\b(go\s+to|navigate\s+to)\b", cmd_lower))
             target = re.sub(r"^(please\s+)?(click\s+(on\s+)?|tap\s+(on\s+)?|press\s+|go\s+to\s+|navigate\s+to\s+)", "", command, flags=re.IGNORECASE).strip()
             target = re.sub(r"^(the\s+)", "", target, flags=re.IGNORECASE).strip()
-            return self._handle_visual_click(target, screenshot_bytes, is_browser)
+            return self._handle_visual_click(target, screenshot_bytes, is_browser, double_click=is_navigation)
 
         # 11. System-2 Fallback: Local Qwen reasoner for complex/unseen intent
         open_wins = self.os_controller.get_open_windows() if hasattr(self.os_controller, "get_open_windows") else []
@@ -554,7 +555,11 @@ class IntentDispatcher:
         )
 
     def _handle_visual_click(
-        self, target: str, screenshot_bytes: Optional[bytes], is_browser: bool
+        self,
+        target: str,
+        screenshot_bytes: Optional[bytes],
+        is_browser: bool,
+        double_click: bool = False,
     ) -> ActionEvent:
         """Visually locates target and executes mouse click."""
         clean_target = re.sub(r"^(the\s+)", "", target, flags=re.IGNORECASE).strip()
@@ -565,18 +570,21 @@ class IntentDispatcher:
             x, y = coords
             self.interruption.set_action_active(True)
             try:
-                self.input_controller.move_and_click(x, y, is_browser=is_browser)
+                self.input_controller.move_and_click(
+                    x, y, is_browser=is_browser, double_click=double_click
+                )
             finally:
                 self.interruption.set_action_active(False)
 
-            msg = f"Clicked {clean_target}"
+            action_verb = "Opened" if double_click else "Clicked"
+            msg = f"{action_verb} {clean_target}"
             self.tts.speak(msg)
             llm_op = f"click: {clean_target} -> ({x}, {y})"
             self._set_llm_output(llm_op)
             return ActionEvent(
                 action_type=ActionType.CLICK_BOX,
                 target=f"({x}, {y})",
-                payload={"tier": tier, "latency_ms": latency},
+                payload={"tier": tier, "latency_ms": latency, "double_click": double_click},
                 verbal_response=msg,
                 llm_output=llm_op,
             )

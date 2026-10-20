@@ -167,29 +167,28 @@ class LocalLLMReasoner:
         screen_ocr: str = "",
     ) -> Dict[str, str]:
         """Answers questions about what is on screen using local desktop metadata and OCR."""
-        win_title = active_window.title if active_window else "None"
-        win_cls = active_window.class_name if active_window else "None"
-        open_wins = (
-            ", ".join([f"'{w.title}'" for w in open_windows[:6]])
-            if open_windows
-            else "None"
-        )
+        win_title = active_window.title if active_window else "Desktop"
+        win_cls = active_window.class_name if active_window else ""
 
         prompt = (
-            f"You are Bit, an offline autonomous AI assistant controlling a Linux desktop.\n"
-            f"The user asked: '{question}'.\n"
-            f"Desktop Context:\n"
-            f"- Active window: '{win_title}' ({win_cls})\n"
+            f"You are Bit, a friendly hands-free voice assistant controlling the user's Linux PC.\n"
+            f"The user is speaking to you aloud and asked: \"{question}\"\n\n"
+            f"Active App: {win_title} ({win_cls})\n"
         )
         if screen_ocr:
-            prompt += f"- On-screen visible content / elements: {screen_ocr[:500]}\n"
-        if open_windows:
-            prompt += f"- Other open windows: {open_wins}\n"
+            prompt += f"Detected On Screen: {screen_ocr[:600]}\n\n"
+        elif open_windows:
+            open_wins = ", ".join([f"'{w.title}'" for w in open_windows[:6]])
+            prompt += f"Open Windows: {open_wins}\n\n"
 
         prompt += (
-            "\nDescribe what is visually on the user's screen in 1 or 2 natural conversational sentences. "
-            "Focus specifically on the visible content, folders, files, tabs, or elements rather than merely listing window titles.\n"
-            "Answer:"
+            "Task: Answer the user directly in 1 short spoken sentence in first person ('I see...'). "
+            "Name the visible items, folders, or files naturally. Never refer to the user in the third person (never say 'The user' or 'The active window is').\n\n"
+            "Example:\n"
+            "User: 'What do you see?'\n"
+            "Bit: 'In your Home folder, I see Documents, Downloads, Music, Pictures, Projects, and Videos.'\n\n"
+            f"User: '{question}'\n"
+            "Bit:"
         )
 
         try:
@@ -199,17 +198,18 @@ class LocalLLMReasoner:
                     "model": self.model_name,
                     "prompt": prompt,
                     "stream": False,
-                    "options": {"temperature": 0.2, "num_predict": 70},
+                    "options": {"temperature": 0.2, "num_predict": 100},
                 }).encode(),
                 headers={"Content-Type": "application/json"},
             )
             with urllib.request.urlopen(req, timeout=3.5) as resp:
                 data = json.loads(resp.read().decode())
                 ans = data.get("response", "").strip()
+                ans = re.sub(r'^(?:Bit:\s*|["\'])', '', ans).rstrip('"\')')
                 return {"answer": ans, "raw_response": ans}
         except Exception as e:
             if screen_ocr:
-                fallback = f"Inside '{win_title}', I see {screen_ocr[:100]} on your screen."
+                fallback = f"In your {win_title} window, I see {screen_ocr[:100]} on your screen."
             else:
-                fallback = f"You are viewing '{win_title}', with {open_wins} open."
+                fallback = f"You are viewing '{win_title}'."
             return {"answer": fallback, "raw_response": fallback}
