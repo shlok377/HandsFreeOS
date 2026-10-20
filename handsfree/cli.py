@@ -107,26 +107,31 @@ def run_live(dry_run: bool = False) -> None:
             return
 
         dashboard.update_speech(chunk)
-        dashboard.add_log(f"Heard: '{chunk.text}'")
+        dashboard.add_heard(chunk.text)
+        if chunk.duration_ms > 0:
+            dashboard.telemetry.record_latency("phonon", chunk.duration_ms)
 
         # Capture current screen and active window
         screenshot = screencap.capture_png_bytes()
         active_win = os_ctrl.get_active_window()
         dashboard.update_window(active_win)
 
-        # Process through primary dispatch seam
+        # Process through primary dispatch seam with timing
+        t0 = time.time()
         event = dispatcher.process_speech_frame(
             chunk, screenshot_bytes=screenshot, mock_active_window=active_win
         )
+        jev_latency = max(2.0, (time.time() - t0) * 1000.0)
+        dashboard.telemetry.record_latency("jev", jev_latency)
 
-        dashboard.add_log(f"Action: {event.action_type.value} -> {event.target or ''}")
+        dashboard.add_action(event.action_type.value, event.target or "")
         if event.llm_output:
             dashboard.update_llm_output(event.llm_output)
         if event.verbal_response:
-            dashboard.tts_status = f"Speaking: '{event.verbal_response}'"
+            dashboard.tts_status = "SPEAKING"
 
         if event.action_type == ActionType.SHUTDOWN:
-            dashboard.add_log("Shutting down Bit...")
+            dashboard.add_action("shutdown", "exit")
             shutdown_event.set()
 
     audio_stream = ContinuousAudioStream(
@@ -135,7 +140,7 @@ def run_live(dry_run: bool = False) -> None:
 
     def on_tts_state(is_speaking: bool) -> None:
         audio_stream.set_echo_suppression(is_speaking)
-        dashboard.tts_status = "Speaking..." if is_speaking else "Idle"
+        dashboard.tts_status = "SPEAKING" if is_speaking else "IDLE"
 
     tts = KokoroTTS(dry_run=dry_run, on_state_change=on_tts_state)
 
