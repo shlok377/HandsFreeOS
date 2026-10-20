@@ -14,6 +14,7 @@ from handsfree.loop.dispatch import IntentDispatcher
 from handsfree.os_layer.hyprland import HyprlandController
 from handsfree.os_layer.input_controller import AdaptiveInputController
 from handsfree.os_layer.network_discovery import NetworkDiscovery
+from handsfree.os_layer.tunnel import ReverseTunnelManager
 from handsfree.ui.tui import HandsFreeDashboard
 from handsfree.ui.visual_server import VisualStreamServer
 from handsfree.vision.grounding import TwoStageGrounder
@@ -32,12 +33,14 @@ def build_parser() -> argparse.ArgumentParser:
     run_parser.add_argument("--web-inspect", action="store_true", help="Start remote visual inspector stream for phone tunneling.")
     run_parser.add_argument("--inspect-port", type=int, default=8000, help="Port for web inspector (default: 8000).")
     run_parser.add_argument("--inspect-token", type=str, default=None, help="Optional authentication token for public tunneling.")
+    run_parser.add_argument("--tunnel", action="store_true", help="Automatically open a public HTTPS tunnel for mobile data phone access.")
 
     # `handsfree demo`
     demo_parser = subparsers.add_parser("demo", help="Run interactive demonstration of voice commands.")
     demo_parser.add_argument("--web-inspect", action="store_true", help="Start remote visual inspector stream during demo.")
     demo_parser.add_argument("--inspect-port", type=int, default=8000, help="Port for web inspector (default: 8000).")
     demo_parser.add_argument("--inspect-token", type=str, default=None, help="Optional authentication token for public tunneling.")
+    demo_parser.add_argument("--tunnel", action="store_true", help="Automatically open a public HTTPS tunnel for mobile data phone access.")
 
     return parser
 
@@ -49,16 +52,18 @@ def main() -> None:
 
     if args.command == "demo":
         run_demo(
-            web_inspect=getattr(args, "web_inspect", False),
+            web_inspect=getattr(args, "web_inspect", False) or getattr(args, "tunnel", False),
             inspect_port=getattr(args, "inspect_port", 8000),
             inspect_token=getattr(args, "inspect_token", None),
+            tunnel=getattr(args, "tunnel", False),
         )
     elif args.command == "run":
         run_live(
             dry_run=args.dry_run,
-            web_inspect=getattr(args, "web_inspect", False),
+            web_inspect=getattr(args, "web_inspect", False) or getattr(args, "tunnel", False),
             inspect_port=getattr(args, "inspect_port", 8000),
             inspect_token=getattr(args, "inspect_token", None),
+            tunnel=getattr(args, "tunnel", False),
         )
     else:
         parser.print_help()
@@ -68,6 +73,7 @@ def run_demo(
     web_inspect: bool = False,
     inspect_port: int = 8000,
     inspect_token: Optional[str] = None,
+    tunnel: bool = False,
 ) -> None:
     """Runs scripted demo through the IntentDispatcher seam."""
     console = Console()
@@ -75,6 +81,8 @@ def run_demo(
 
     hub = VisualStreamHub() if web_inspect else None
     server = None
+    tunnel_mgr = None
+
     if web_inspect and hub is not None:
         server = VisualStreamServer(hub=hub, host="0.0.0.0", port=inspect_port, auth_token=inspect_token)
         server.start()
@@ -82,6 +90,16 @@ def run_demo(
         console.print(f"[bold green][Visual Inspector][/bold green] Stream active at [bold cyan]{endpoints.get('lan', endpoints['local'])}[/bold cyan]")
         if "tailscale" in endpoints:
             console.print(f"[bold magenta][Tailscale][/bold magenta] Phone URL: [bold underline]{endpoints['tailscale']}[/bold underline]")
+
+        if tunnel:
+            console.print("[bold yellow]Opening public HTTPS tunnel for phone access...[/bold yellow]")
+            tunnel_mgr = ReverseTunnelManager(local_port=server.port)
+            public_url = tunnel_mgr.start(timeout=6.0)
+            if public_url:
+                query = f"?token={inspect_token}" if inspect_token else ""
+                console.print(f"[bold magenta][Public Phone Tunnel][/bold magenta] [bold underline]{public_url}/{query}[/bold underline]")
+            else:
+                console.print("[bold red]Public tunnel timed out; using LAN IP instead.[/bold red]")
 
     jev = JevEngine()
     os_ctrl = HyprlandController()
@@ -113,7 +131,13 @@ def run_demo(
             console.print(f"[bold green]Dispatched Action:[/bold green] {event.action_type.value} -> {event.target or ''}")
             console.print(f"[bold magenta]Bit Replied:[/bold magenta] '{event.verbal_response}'")
             time.sleep(0.5)
+
+        if web_inspect and hub is not None:
+            console.print("\n[bold green]Visual inspector is running! Open the URL above on your phone.[/bold green]")
+            console.input("[dim]Press Enter when done to stop the visual stream...[/dim]")
     finally:
+        if tunnel_mgr is not None:
+            tunnel_mgr.stop()
         if server is not None:
             server.stop()
 
@@ -123,6 +147,7 @@ def run_live(
     web_inspect: bool = False,
     inspect_port: int = 8000,
     inspect_token: Optional[str] = None,
+    tunnel: bool = False,
 ) -> None:
     """Starts live daemon, microphone ingestion, and interactive Rich dashboard."""
     from rich.live import Live
@@ -133,6 +158,8 @@ def run_live(
 
     hub = VisualStreamHub() if web_inspect else None
     server = None
+    tunnel_mgr = None
+
     if web_inspect and hub is not None:
         server = VisualStreamServer(hub=hub, host="0.0.0.0", port=inspect_port, auth_token=inspect_token)
         server.start()
@@ -140,6 +167,16 @@ def run_live(
         dashboard.add_log(f"Visual Inspector: {endpoints.get('lan', endpoints['local'])}")
         if "tailscale" in endpoints:
             dashboard.add_log(f"Tailscale mobile URL: {endpoints['tailscale']}")
+
+        if tunnel:
+            dashboard.add_log("Opening public HTTPS reverse tunnel for phone...")
+            tunnel_mgr = ReverseTunnelManager(local_port=server.port)
+            public_url = tunnel_mgr.start(timeout=6.0)
+            if public_url:
+                query = f"?token={inspect_token}" if inspect_token else ""
+                dashboard.add_log(f"Public Phone Tunnel: {public_url}/{query}")
+            else:
+                dashboard.add_log("Tunnel setup timed out; LAN streaming active.")
 
     jev = JevEngine()
     os_ctrl = HyprlandController()
@@ -302,6 +339,8 @@ def run_live(
     except KeyboardInterrupt:
         dashboard.add_log("Shutting down HandsFreeOS...")
     finally:
+        if tunnel_mgr is not None:
+            tunnel_mgr.stop()
         if server is not None:
             server.stop()
         if sd_stream is not None:

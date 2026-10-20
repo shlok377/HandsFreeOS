@@ -21,11 +21,12 @@ class DummyDetector:
 
 def test_cli_parser_web_inspect_arguments():
     parser = build_parser()
-    args = parser.parse_args(["run", "--web-inspect", "--inspect-port", "8888", "--inspect-token", "secret99"])
+    args = parser.parse_args(["run", "--web-inspect", "--inspect-port", "8888", "--inspect-token", "secret99", "--tunnel"])
     assert args.command == "run"
     assert args.web_inspect is True
     assert args.inspect_port == 8888
     assert args.inspect_token == "secret99"
+    assert args.tunnel is True
 
 
 def test_grounder_updates_stream_hub():
