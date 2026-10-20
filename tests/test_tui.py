@@ -5,28 +5,50 @@ import pytest
 
 from handsfree.domain.models import JevDecision, SpeechChunk, WindowInfo
 from handsfree.ui.telemetry import TelemetryCollector
-from handsfree.ui.tui import HandsFreeDashboard, generate_waveform, format_meter_bar
+from handsfree.ui.tui import (
+    HandsFreeDashboard,
+    generate_waveform,
+    generate_inward_spectrum_box,
+    format_meter_bar,
+)
 
 
-def test_waveform_generation_silence():
-    top, mid, bot = generate_waveform(rms=0.001, width=30)
-    assert top.startswith("[") and top.endswith("]")
-    assert mid.startswith("[") and mid.endswith("]")
-    assert bot.startswith("[") and bot.endswith("]")
-    # In silence, top and bottom are mostly empty space
-    assert top.count(" ") > 20
-    assert bot.count(" ") > 20
-    assert "·" in mid
+def test_inward_spectrum_box_calm_mode():
+    box_lines = generate_inward_spectrum_box(input_level=0.08, width=56, height=10)
+    assert len(box_lines) == 10
+    top = box_lines[0]
+    bot = box_lines[-1]
+    assert top.startswith("╭") and top.endswith("╮")
+    assert bot.startswith("╰") and bot.endswith("╯")
+
+    # In calm mode (<= 0.2), inner rows must stay calm with faint ticks and no deep blocks
+    inner_rows = box_lines[1:-1]
+    for row in inner_rows:
+        assert row.startswith("│") and row.endswith("│")
+        # Center should be empty / calm
+        center = row[10:-10]
+        assert center.strip() == ""
 
 
-def test_waveform_generation_active_voice():
-    top, mid, bot = generate_waveform(rms=0.05, width=30)
-    assert top.startswith("[") and top.endswith("]")
-    assert mid.startswith("[") and mid.endswith("]")
-    assert bot.startswith("[") and bot.endswith("]")
-    # With active voice, top and bottom should have peak characters
-    assert any(c in top for c in [":", ".", "'"])
-    assert any(c in bot for c in [":", ".", "'"])
+def test_inward_spectrum_box_active_mode():
+    box_lines = generate_inward_spectrum_box(input_level=0.55, width=56, height=10)
+    assert len(box_lines) == 10
+    inner_rows = box_lines[1:-1]
+    # In active mode (> 0.2), vertical walls project block bars inward
+    has_inward_blocks = any("█" in row or "▉" in row or "▊" in row for row in inner_rows)
+    assert has_inward_blocks
+
+
+def test_inward_spectrum_box_frequency_mapping():
+    # Provide heavy bass in bottom band, silent treble in top band
+    bands = [0.9, 0.7, 0.4, 0.1, 0.0, 0.0, 0.0, 0.0]
+    box_lines = generate_inward_spectrum_box(input_level=0.6, spectrum_bands=bands, width=56, height=10)
+    # Bottom inner row (near end) should project deeper than top inner row (near start)
+    top_row = box_lines[1]
+    bottom_row = box_lines[-2]
+    top_blocks = sum(top_row.count(c) for c in ["█", "▉", "▊", "▋", "▌", "▍", "▎"])
+    bot_blocks = sum(bottom_row.count(c) for c in ["█", "▉", "▊", "▋", "▌", "▍", "▎"])
+    assert bot_blocks > top_blocks
 
 
 def test_format_meter_bar():

@@ -192,6 +192,22 @@ def run_live(dry_run: bool = False) -> None:
 
             rms = float(np.sqrt(np.mean(frame_16k**2)))
             dashboard.update_audio_level(rms)
+
+            # Compute real FFT for frequency spectrum visualizer
+            try:
+                fft_mags = np.abs(np.fft.rfft(frame_16k))
+                n_bins = len(fft_mags)
+                num_bands = 8
+                band_energies = []
+                for b in range(num_bands):
+                    start_idx = int((b / num_bands) ** 1.3 * n_bins)
+                    end_idx = max(start_idx + 1, int(((b + 1) / num_bands) ** 1.3 * n_bins))
+                    band_energy = float(np.mean(fft_mags[start_idx:end_idx]))
+                    band_energies.append(min(1.0, band_energy * 2.5))
+                dashboard.update_audio_spectrum(band_energies)
+            except Exception:
+                pass
+
             audio_stream.feed_frame(frame_16k)
 
         sd_stream = sd.InputStream(

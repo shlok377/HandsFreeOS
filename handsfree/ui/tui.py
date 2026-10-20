@@ -79,7 +79,69 @@ def generate_waveform(rms: float, width: int = 42) -> Tuple[str, str, str]:
             top_buf[i] = "." if i % 2 == 0 else " "
             bot_buf[i] = "." if i % 2 == 0 else " "
 
-    return f"[{''.join(top_buf)}]", f"[{''.join(mid_buf)}]", f"[{''.join(bot_buf)}]"
+def generate_inward_spectrum_box(
+    input_level: float,
+    spectrum_bands: Optional[List[float]] = None,
+    width: int = 56,
+    height: int = 10,
+) -> List[str]:
+    """Generates a rectangle audio visualizer whose standing sides project bar graphs inward.
+
+    - width x height rectangle with rounded corners
+    - input_level <= 0.2: Calm state with subtle boundary ticks
+    - input_level > 0.2: Left and right vertical walls project frequency bar graphs inward
+    - Frequency mapping: bottom rows = bass (100-500Hz), middle rows = vocal formants, top rows = treble
+    """
+    inner_w = max(10, width - 2)
+    inner_h = max(2, height - 2)
+
+    top_border = "╭" + "─" * inner_w + "╮"
+    bot_border = "╰" + "─" * inner_w + "╯"
+
+    # Calm state when input <= 0.2
+    if input_level <= 0.2:
+        tick_l = "▏" if input_level > 0.02 else " "
+        tick_r = "▕" if input_level > 0.02 else " "
+        gap = " " * (inner_w - 2)
+        calm_row = f"│{tick_l}{gap}{tick_r}│"
+        return [top_border] + [calm_row] * inner_h + [bot_border]
+
+    # Active state when input > 0.2
+    max_bar_cols = max(1, (inner_w // 2) - 1)
+    excess_norm = min(1.0, (input_level - 0.2) / 0.5)
+
+    # Map frequency spectrum to rows (bottom = bass, top = treble)
+    row_energies: List[float] = []
+    if spectrum_bands and len(spectrum_bands) > 0:
+        n_bands = len(spectrum_bands)
+        for r in range(inner_h):
+            # r=0 is top (treble, high index), r=inner_h - 1 is bottom (bass, index 0)
+            fraction = (inner_h - 1 - r) / max(1, inner_h - 1)
+            band_idx = min(n_bands - 1, max(0, int(fraction * (n_bands - 1))))
+            row_energies.append(float(spectrum_bands[band_idx]))
+    else:
+        # Organic speech resonant formant distribution
+        for r in range(inner_h):
+            fraction = (inner_h - 1 - r) / max(1, inner_h - 1)
+            formant_amp = math.exp(-((fraction - 0.55) ** 2) / 0.07)
+            bass_amp = math.exp(-((fraction - 0.85) ** 2) / 0.06) * 0.8
+            energy = min(1.0, (formant_amp * 0.95 + bass_amp * 0.75))
+            row_energies.append(energy)
+
+    rows: List[str] = [top_border]
+    for r in range(inner_h):
+        energy = row_energies[r]
+        bar_len = int(round(energy * excess_norm * max_bar_cols))
+        bar_len = min(max_bar_cols, max(1, bar_len))
+
+        left_bar = "█" * bar_len
+        right_bar = "█" * bar_len
+        gap_len = inner_w - (bar_len * 2)
+        gap = " " * max(0, gap_len)
+        rows.append(f"│{left_bar}{gap}{right_bar}│")
+
+    rows.append(bot_border)
+    return rows
 
 
 from collections import deque
@@ -122,6 +184,7 @@ class HandsFreeDashboard:
         self.action_entries: deque[ActionLogEntry] = deque(maxlen=50)
         self.tts_status: str = "IDLE"
         self.mic_level: float = 0.013
+        self.spectrum_bands: List[float] = []
         self.llm_output: str = json.dumps(
             {
                 "intent": "answer_user",
@@ -132,6 +195,10 @@ class HandsFreeDashboard:
         )
 
         self._setup_layout()
+
+    def update_audio_spectrum(self, bands: List[float]) -> None:
+        """Updates live FFT audio frequency band levels."""
+        self.spectrum_bands = bands
 
     def _setup_layout(self) -> None:
         """Configures the dashboard grid: Main body and Bottom footer bar."""
@@ -216,16 +283,15 @@ class HandsFreeDashboard:
         table.add_row(speech_text)
         table.add_row(Text(""))
 
-        # 2. Mic Level & Waveform Visualizer
+        # 2. Mic Level & Inward-Projecting Spectrum Box Visualizer
         mic_header = Text()
         mic_header.append("Mic Level: ", style="bold white")
         mic_header.append(f"[{self.mic_level:.3f}]", style="bold #4ade80")
         table.add_row(mic_header)
 
-        top_w, mid_w, bot_w = generate_waveform(self.mic_level, width=42)
-        table.add_row(Text(top_w, style="#22d3ee"))
-        table.add_row(Text(mid_w, style="#22d3ee"))
-        table.add_row(Text(bot_w, style="#22d3ee"))
+        spectrum_rows = self._render_spectrum_widget(width=48, height=8)
+        for s_row in spectrum_rows:
+            table.add_row(s_row)
         table.add_row(Text(""))
 
         # 3. Inner Panel: LLM OUTPUT
@@ -272,6 +338,51 @@ class HandsFreeDashboard:
             box=box.ROUNDED,
             padding=(1, 1),
         )
+
+    def _render_spectrum_widget(self, width: int = 48, height: int = 8) -> List[Text]:
+        """Renders the rectangular visualizer with cyan-to-green gradient."""
+        raw_lines = generate_inward_spectrum_box(
+            input_level=self.mic_level,
+            spectrum_bands=self.spectrum_bands,
+            width=width,
+            height=height,
+        )
+        rendered_lines: List[Text] = []
+        for idx, line in enumerate(raw_lines):
+            t = Text()
+            if idx == 0 or idx == len(raw_lines) - 1:
+                t.append(line, style="#3882a5")
+            else:
+                t.append("│", style="#3882a5")
+                inner = line[1:-1]
+                if self.mic_level <= 0.2:
+                    t.append(inner, style="dim #22d3ee")
+                else:
+                    mid_idx = len(inner) // 2
+                    left_part = inner[:mid_idx]
+                    right_part = inner[mid_idx:]
+
+                    # Left inward projection: cyan (#22d3ee) at wall to lime green (#4ade80) at center
+                    left_blocks = left_part.count("█")
+                    left_spaces = len(left_part) - left_blocks
+                    for b_i in range(left_blocks):
+                        frac = b_i / max(1, left_blocks)
+                        color = "#4ade80" if frac > 0.6 else "#22d3ee"
+                        t.append("█", style=f"bold {color}")
+                    t.append(" " * left_spaces)
+
+                    # Right inward projection: lime green (#4ade80) near center to cyan (#22d3ee) at wall
+                    right_blocks = right_part.count("█")
+                    right_spaces = len(right_part) - right_blocks
+                    t.append(" " * right_spaces)
+                    for b_i in range(right_blocks):
+                        frac = b_i / max(1, right_blocks)
+                        color = "#22d3ee" if frac > 0.4 else "#4ade80"
+                        t.append("█", style=f"bold {color}")
+
+                t.append("│", style="#3882a5")
+            rendered_lines.append(t)
+        return rendered_lines
 
     def _render_llm_output(self) -> Panel:
         """Renders the syntax-highlighted JSON inside LLM OUTPUT inner box."""
