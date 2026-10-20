@@ -4,9 +4,9 @@
 
 **Blocked by:** None (can start immediately)
 
-**Status:** ready-for-agent
+**Status:** done
 
-- [ ] Desktop scanner parses `.desktop` files into a searchable app catalog with display names, executable binaries, and keywords.
-- [ ] Web destination resolver recognizes colloquial references (e.g., "YouTube", "Discord in my browser") and returns valid HTTPS URLs.
-- [ ] Strips trailing intent fluff such as "in my browser", "on my screen", or "from my computer" before resolving targets.
-- [ ] Unit tests verify discovery of desktop applications and resolution of web targets without hardcoded string matching in the main dispatch loop.
+- [x] Desktop scanner parses `.desktop` files into a searchable app catalog with display names, executable binaries, and keywords.
+- [x] Web destination resolver recognizes colloquial references (e.g., "YouTube", "Discord in my browser") and returns valid HTTPS URLs.
+- [x] Strips trailing intent fluff such as "in my browser", "on my screen", or "from my computer" before resolving targets.
+- [x] Unit tests verify discovery of desktop applications and resolution of web targets without hardcoded string matching in the main dispatch loop.

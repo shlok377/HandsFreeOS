@@ -7,10 +7,10 @@
 - 02: [Intelligence] System desktop app and web service auto-discovery
 - 03: [Intelligence] Context-aware interruption and abort scoper
 
-**Status:** ready-for-agent
+**Status:** done
 
-- [ ] Local Qwen reasoner prompt defines explicit OS tools with parameters and expected response schema.
-- [ ] Dispatch seam evaluates natural speech directly through semantic tool calling without falling into blind shell execution.
-- [ ] Jev safety scoring runs on proposed tool actions before execution, prompting for confirmation if $P(\text{destructive}) > 0.80$.
-- [ ] TUI dashboard displays a compact, single-line summary of the LLM tool decision in "LLM O/P:".
-- [ ] Comprehensive seam tests verify resolution of complex commands ("Open YouTube in my browser", "Close that Discord app", "Bye bye") across mocked and live model interfaces.
+- [x] Local Qwen reasoner prompt defines explicit OS tools with parameters and expected response schema.
+- [x] Dispatch seam evaluates natural speech directly through semantic tool calling without falling into blind shell execution.
+- [x] Jev safety scoring runs on proposed tool actions before execution, prompting for confirmation if $P(\text{destructive}) > 0.80$.
+- [x] TUI dashboard displays a compact, single-line summary of the LLM tool decision in "LLM O/P:".
+- [x] Comprehensive seam tests verify resolution of complex commands ("Open YouTube in my browser", "Close that Discord app", "Bye bye") across mocked and live model interfaces.

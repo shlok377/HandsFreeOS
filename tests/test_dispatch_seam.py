@@ -18,6 +18,7 @@ class MockOSController:
         self.launched_apps: list[str] = []
         self.opened_urls: list[str] = []
         self.focused_windows: list[str] = []
+        self.closed_windows: list[str] = []
         self.created_files: list[tuple[str, str]] = []
         self.windows = [
             WindowInfo(address="0x100", title="WhatsApp - Google Chrome", class_name="google-chrome", is_focused=False),
@@ -35,6 +36,10 @@ class MockOSController:
 
     def focus_window(self, address_or_class: str) -> bool:
         self.focused_windows.append(address_or_class)
+        return True
+
+    def close_window(self, address_or_class: str) -> bool:
+        self.closed_windows.append(address_or_class)
         return True
 
     def launch_app(self, command: str) -> bool:
@@ -246,5 +251,51 @@ def test_close_yourselves_plural_seam(dispatcher):
     event = dispatcher.process_speech_frame(chunk)
     assert event.action_type == ActionType.SHUTDOWN
     assert "Goodbye" in event.verbal_response
+
+
+def test_close_window_seam(dispatcher):
+    """Verifies: 'close window' closes active window (0x200)."""
+    chunk = SpeechChunk(text="close window", is_final=True)
+    event = dispatcher.process_speech_frame(chunk)
+    assert event.action_type == ActionType.CLOSE_WINDOW
+    assert "0x200" in dispatcher.os_controller.closed_windows
+    assert "Visual Studio Code" in event.verbal_response
+
+
+def test_close_targeted_window_seam(dispatcher, monkeypatch):
+    """Verifies: 'Close that Discord app.' through reasoner closes targeted window."""
+    monkeypatch.setattr(
+        dispatcher.local_llm,
+        "reason_intent",
+        lambda *args, **kwargs: {"intent": "close_window", "target": "WhatsApp", "speech": "Closing WhatsApp"}
+    )
+    chunk = SpeechChunk(text="Close that WhatsApp app.", is_final=True)
+    event = dispatcher.process_speech_frame(chunk)
+    assert event.action_type == ActionType.CLOSE_WINDOW
+    assert "0x100" in dispatcher.os_controller.closed_windows
+    assert "WhatsApp" in event.verbal_response
+
+
+def test_open_youtube_in_browser_seam(dispatcher):
+    """Verifies: 'Open YouTube in my browser.' resolves to https://www.youtube.com."""
+    chunk = SpeechChunk(text="Open YouTube in my browser.", is_final=True)
+    event = dispatcher.process_speech_frame(chunk)
+    assert event.action_type == ActionType.OPEN_URL
+    assert "youtube.com" in event.target
+    assert "https://www.youtube.com" in dispatcher.os_controller.opened_urls
+
+
+def test_dispatch_memory_cache_fast_path(dispatcher):
+    """Verifies that once a command is learned, subsequent calls hit the <5ms cache."""
+    dispatcher.memory_store.record("open my project folder", "launch_app", "dolphin")
+
+    chunk = SpeechChunk(text="open my project folder", is_final=True)
+    event = dispatcher.process_speech_frame(chunk)
+    assert event.action_type == ActionType.LAUNCH_APP
+    assert event.target == "dolphin"
+    assert "Cache <5ms" in event.llm_output
+
+
+
 
 

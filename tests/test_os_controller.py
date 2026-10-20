@@ -120,3 +120,26 @@ def test_hyprland_is_browser_window():
     assert controller.is_browser_window(w_firefox) is True
     assert controller.is_browser_window(w_term) is False
     assert controller.is_browser_window(None) is False
+
+
+def test_hyprland_controller_close_window(monkeypatch):
+    """Verifies close_window issues hyprctl dispatch closewindow or killactive."""
+    controller = HyprlandController()
+    dispatched = []
+    monkeypatch.setattr(controller, "_run_hyprctl", lambda args: dispatched.append(args) or "ok")
+
+    # Close specific address
+    res1 = controller.close_window("0xabc")
+    assert res1 is True
+    assert dispatched[-1] == ["dispatch", "closewindow", "address:0xabc"]
+
+    # Close specific class
+    res2 = controller.close_window("discord")
+    assert res2 is True
+    assert dispatched[-1] == ["dispatch", "closewindow", "discord"]
+
+    # Close active window
+    res3 = controller.close_window("")
+    assert res3 is True
+    assert dispatched[-1] == ["dispatch", "killactive"]
+

@@ -68,14 +68,20 @@ class LocalLLMReasoner:
         command: str,
         active_window: Optional[WindowInfo] = None,
         open_windows: Optional[List[WindowInfo]] = None,
+        discovered_apps: Optional[List[str]] = None,
     ) -> Dict[str, Any]:
         """Classifies arbitrary natural speech into structured OS actions using Qwen."""
         win_title = active_window.title if active_window else "None"
         win_cls = active_window.class_name if active_window else "None"
         other_windows = (
-            ", ".join([f"'{w.title}' ({w.class_name})" for w in open_windows[:5]])
+            ", ".join([f"'{w.title}' ({w.class_name})" for w in open_windows[:6]])
             if open_windows
             else "None"
+        )
+        apps_summary = (
+            ", ".join(discovered_apps[:15])
+            if discovered_apps
+            else "Dolphin, Ghostty, Code, Firefox, Discord, Spotify, Gedit"
         )
 
         prompt = (
@@ -90,11 +96,15 @@ class LocalLLMReasoner:
             f"Examples:\n"
             f"- 'open new tab in my browser' -> {{\"intent\": \"hotkey\", \"target\": [\"ctrl\", \"t\"], \"speech\": \"Opening a new tab\"}}\n"
             f"- 'close this tab' -> {{\"intent\": \"hotkey\", \"target\": [\"ctrl\", \"w\"], \"speech\": \"Closing tab\"}}\n"
-            f"- 'close yourselves' or 'exit' -> {{\"intent\": \"shutdown\", \"target\": \"exit\", \"speech\": \"Goodbye! Shutting down Bit.\"}}\n"
-            f"- 'open calculator' -> {{\"intent\": \"launch_app\", \"target\": \"calculator\", \"speech\": \"Opening calculator\"}}\n\n"
+            f"- 'close that discord app' or 'close this discord window' -> {{\"intent\": \"close_window\", \"target\": \"discord\", \"speech\": \"Closing Discord\"}}\n"
+            f"- 'open youtube in my browser' -> {{\"intent\": \"open_url\", \"target\": \"https://www.youtube.com\", \"speech\": \"Opening YouTube\"}}\n"
+            f"- 'close yourselves' or 'bye bye' or 'quit, quit' or 'exit' -> {{\"intent\": \"shutdown\", \"target\": \"exit\", \"speech\": \"Goodbye! Shutting down Bit.\"}}\n"
+            f"- 'how many apps do I have open?' -> {{\"intent\": \"answer_user\", \"target\": \"\", \"speech\": \"You have 2 apps open.\"}}\n"
+            f"- 'open dolphin' -> {{\"intent\": \"launch_app\", \"target\": \"dolphin\", \"speech\": \"Opening Dolphin\"}}\n\n"
             f"Context:\n"
             f"- Active Window: '{win_title}' ({win_cls})\n"
-            f"- Open Windows: {other_windows}\n\n"
+            f"- Open Windows: {other_windows}\n"
+            f"- Installed Apps: {apps_summary}\n\n"
             f"User command: '{command}'\n"
             f"JSON:"
         )
@@ -116,6 +126,26 @@ class LocalLLMReasoner:
                 raw_text = data.get("response", "").strip()
                 parsed = json.loads(raw_text)
                 parsed["raw_response"] = raw_text
+
+                # Build concise single-line summary for dashboard
+                intent = parsed.get("intent", "noop")
+                target = parsed.get("target", "")
+                speech = parsed.get("speech", "")
+                if intent == "answer_user":
+                    parsed["formatted_summary"] = f'answer_user: "{speech[:35]}"'
+                elif intent == "close_window":
+                    parsed["formatted_summary"] = f"close_window: {target}"
+                elif intent == "open_url":
+                    parsed["formatted_summary"] = f"open_url: {target}"
+                elif intent == "launch_app":
+                    parsed["formatted_summary"] = f"launch_app: {target}"
+                elif intent == "hotkey":
+                    parsed["formatted_summary"] = f"hotkey: {target}"
+                elif intent == "shutdown":
+                    parsed["formatted_summary"] = "shutdown"
+                else:
+                    parsed["formatted_summary"] = f"{intent}: {target}"
+
                 return parsed
         except Exception as e:
             logger.warning(f"Local Qwen reasoning error: {e}")
@@ -124,6 +154,7 @@ class LocalLLMReasoner:
                 "target": command,
                 "speech": "",
                 "raw_response": f"Err: {str(e)[:25]}",
+                "formatted_summary": f"noop: {command[:20]}",
             }
 
     def answer_screen_query(

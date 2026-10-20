@@ -4,9 +4,9 @@
 
 **Blocked by:** None (can start immediately)
 
-**Status:** ready-for-agent
+**Status:** done
 
-- [ ] Interruption coordinator differentiates between standalone abort signals ("Wait", "Stop", "Abort") and verb-object commands ("Quit Discord", "Stop the music").
-- [ ] Emergency hardware abort is triggered only if an input action is actively executing or an unambiguous emergency halt keyword is spoken.
-- [ ] Utterances with intent payloads pass through to the semantic reasoner without returning premature `ActionType.ABORT`.
-- [ ] Unit tests verify that "Quit Discord" proceeds to intent handling while "Wait" and "Stop" trigger immediate abort.
+- [x] Interruption coordinator differentiates between standalone abort signals ("Wait", "Stop", "Abort") and verb-object commands ("Quit Discord", "Stop the music").
+- [x] Emergency hardware abort is triggered only if an input action is actively executing or an unambiguous emergency halt keyword is spoken.
+- [x] Utterances with intent payloads pass through to the semantic reasoner without returning premature `ActionType.ABORT`.
+- [x] Unit tests verify that "Quit Discord" proceeds to intent handling while "Wait" and "Stop" trigger immediate abort.

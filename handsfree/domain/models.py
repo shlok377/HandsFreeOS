@@ -64,6 +64,7 @@ class JevDecision(BaseModel):
 class ActionType(str, Enum):
     """Types of executable OS actions."""
     FOCUS_WINDOW = "focus_window"
+    CLOSE_WINDOW = "close_window"
     LAUNCH_APP = "launch_app"
     CREATE_FILE = "create_file"
     OPEN_URL = "open_url"

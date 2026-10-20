@@ -98,6 +98,16 @@ class HyprlandController(IOSController):
             out = self._run_hyprctl(["dispatch", "focuswindow", address_or_class])
         return "ok" in out.lower() or out == ""
 
+    def close_window(self, address_or_class: str = "") -> bool:
+        """Closes target window via `hyprctl dispatch closewindow` or `killactive`."""
+        if address_or_class.startswith("0x"):
+            out = self._run_hyprctl(["dispatch", "closewindow", f"address:{address_or_class}"])
+        elif address_or_class:
+            out = self._run_hyprctl(["dispatch", "closewindow", address_or_class])
+        else:
+            out = self._run_hyprctl(["dispatch", "killactive"])
+        return "ok" in out.lower() or out == ""
+
     def launch_app(self, command: str) -> bool:
         """Launches application via `hyprctl dispatch exec` or subprocess."""
         # Clean command

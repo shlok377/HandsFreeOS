@@ -74,6 +74,11 @@ class IOSController(ABC):
         pass
 
     @abstractmethod
+    def close_window(self, address_or_class: str) -> bool:
+        """Closes target window via compositor IPC or killactive."""
+        pass
+
+    @abstractmethod
     def launch_app(self, command: str) -> bool:
         """Launches application via OS dispatch."""
         pass

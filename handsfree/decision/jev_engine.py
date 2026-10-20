@@ -33,7 +33,7 @@ class JevEngine(IDecisionEngine):
         # Triggers for live interruption aborts
         self.abort_tokens = {
             "wait", "stop", "cancel", "pause", "hold on", "no", "abort",
-            "don't", "dont", "never mind", "nevermind", "quit", "halt",
+            "don't", "dont", "never mind", "nevermind", "halt",
             "not that", "wrong"
         }
 
@@ -156,11 +156,13 @@ class JevEngine(IDecisionEngine):
             return True
 
         # Conversational greetings / questions / exit commands (anchored or directed to assistant)
-        if re.search(r"^(?:say\s+)?(?:hi|hello|hey)(?:\s+(?:there|bit|to\s+me))?$", cleaned):
+        if re.search(r"^(?:say\s+)?(?:hi|hello|hey|bye|goodbye)(?:\s+(?:there|bit|to\s+me|bye))?$", cleaned):
             return True
-        if re.search(r"^(?:who\s+are\s+you|what\s+can\s+you\s+do|how\s+are\s+you|close\s+yourselves|close\s+yourself|exit|quit|stop\s+listening)$", cleaned):
+        if re.search(r"^(?:who\s+are\s+you|what\s+can\s+you\s+do|how\s+are\s+you|close\s+yourselves|close\s+yourself|exit|quit|stop\s+listening|bye\s+bye|quit[,\s]+quit)$", cleaned):
             return True
         if re.search(r"\b(what\s+do\s+you\s+see(?:\s+on)?|describe|what's\s+on|what\s+is\s+on)\s+(?:the\s+|my\s+)?screen\b", cleaned):
+            return True
+        if re.search(r"\bhow\s+many\s+(?:apps|windows|discords|\w+)\b", cleaned):
             return True
 
         # Check starting word or clause for command verbs

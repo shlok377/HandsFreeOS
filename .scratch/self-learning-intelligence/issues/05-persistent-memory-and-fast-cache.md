@@ -5,9 +5,9 @@
 **Blocked by:**
 - 04: [Intelligence] LLM tool-calling semantic dispatcher
 
-**Status:** ready-for-agent
+**Status:** done
 
-- [ ] Persistent memory store persists user-specific phrasing-to-tool mappings to `~/.config/handsfree/memory.json`.
-- [ ] In-memory semantic cache achieves sub-5ms lookup before calling local Qwen, promoting recurring natural phrases to instant execution.
-- [ ] Verbal corrections ("No, not that", "Wrong window", "I meant X") update or invalidate existing cache entries.
-- [ ] Unit tests verify cache hit latency (<5ms), JSON persistence across restarts, and adaptive correction updates.
+- [x] Persistent memory store persists user-specific phrasing-to-tool mappings to `~/.config/handsfree/memory.json`.
+- [x] In-memory semantic cache achieves sub-5ms lookup before calling local Qwen, promoting recurring natural phrases to instant execution.
+- [x] Verbal corrections ("No, not that", "Wrong window", "I meant X") update or invalidate existing cache entries.
+- [x] Unit tests verify cache hit latency (<5ms), JSON persistence across restarts, and adaptive correction updates.

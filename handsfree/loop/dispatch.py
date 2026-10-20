@@ -8,9 +8,11 @@ import urllib.parse
 from typing import Callable, Optional
 
 from handsfree.decision.local_llm import LocalLLMReasoner
+from handsfree.decision.memory import EpisodicMemoryStore
 from handsfree.domain.interfaces import IDecisionEngine, IOSController, IInputController, ITextToSpeech
 from handsfree.domain.models import ActionEvent, ActionType, SpeechChunk, WindowInfo
 from handsfree.loop.interruption import InterruptionCoordinator
+from handsfree.os_layer.discovery import WebDestinationResolver
 from handsfree.vision.grounding import TwoStageGrounder
 
 logger = logging.getLogger(__name__)
@@ -28,6 +30,8 @@ class IntentDispatcher:
         grounder: Optional[TwoStageGrounder] = None,
         local_llm: Optional[LocalLLMReasoner] = None,
         on_llm_output: Optional[Callable[[str], None]] = None,
+        destination_resolver: Optional[WebDestinationResolver] = None,
+        memory_store: Optional[EpisodicMemoryStore] = None,
     ):
         self.decision_engine = decision_engine
         self.os_controller = os_controller
@@ -36,9 +40,12 @@ class IntentDispatcher:
         self.grounder = grounder or TwoStageGrounder(decision_engine=decision_engine)
         self.local_llm = local_llm or LocalLLMReasoner()
         self.on_llm_output = on_llm_output
+        self.destination_resolver = destination_resolver or WebDestinationResolver()
+        self.memory_store = memory_store or EpisodicMemoryStore()
         self.interruption = InterruptionCoordinator(decision_engine, input_controller)
 
         self._pending_confirmation: Optional[ActionEvent] = None
+        self._last_executed_command: Optional[str] = None
 
     def _set_llm_output(self, text: str) -> None:
         """Reports LLM output to registered listener."""
@@ -179,7 +186,44 @@ class IntentDispatcher:
                 verbal_response=f"Typed {text_to_type}"
             )
 
-        # 6. WEB SEARCH INTENT ("search <query> [in my browser|on google|on web|online]" or "google <query>")
+        # 6. FAST-PATH MEMORY CACHE LOOKUP (<5ms)
+        cached = self.memory_store.lookup(command)
+        if cached:
+            c_intent = cached.get("intent")
+            c_target = cached.get("target")
+            c_speech = cached.get("speech", "")
+            c_llm_op = f"[Cache <5ms] {c_intent}: {c_target}"
+            self._set_llm_output(c_llm_op)
+            self._last_executed_command = command
+
+            if c_intent == "hotkey" and isinstance(c_target, list):
+                self.input_controller.send_hotkey(c_target)
+                if c_speech:
+                    self.tts.speak(c_speech)
+                return ActionEvent(action_type=ActionType.HOTKEY, target="+".join(c_target), verbal_response=c_speech, llm_output=c_llm_op)
+
+            elif c_intent == "open_url" and c_target:
+                self.os_controller.open_url(str(c_target))
+                msg = c_speech or f"Opening {c_target}"
+                self.tts.speak(msg)
+                return ActionEvent(action_type=ActionType.OPEN_URL, target=str(c_target), verbal_response=msg, llm_output=c_llm_op)
+
+            elif c_intent == "launch_app" and c_target:
+                resolved_bin = self.destination_resolver.app_discovery.find_app(str(c_target)) or str(c_target)
+                self.os_controller.launch_app(resolved_bin)
+                msg = c_speech or f"Opening {c_target}"
+                self.tts.speak(msg)
+                return ActionEvent(action_type=ActionType.LAUNCH_APP, target=resolved_bin, verbal_response=msg, llm_output=c_llm_op)
+
+            elif c_intent == "close_window":
+                return self._handle_close_window(active_win, target=str(c_target) if c_target else None)
+
+            elif c_intent == "shutdown":
+                msg = c_speech or "Goodbye! Shutting down Bit."
+                self.tts.speak(msg)
+                return ActionEvent(action_type=ActionType.SHUTDOWN, target="exit", verbal_response=msg, llm_output=c_llm_op)
+
+        # 7. WEB SEARCH INTENT ("search <query> [in my browser|on google|on web|online]" or "google <query>")
         search_match = re.search(
             r"^(?:please\s+)?(?:search(?:\s+for)?|google)\s+(.+?)(?:\s+(?:in\s+(?:my\s+)?browser|on\s+google|on\s+(?:the\s+)?web|online))?$",
             command,
@@ -215,13 +259,23 @@ class IntentDispatcher:
 
         # 11. System-2 Fallback: Local Qwen reasoner for complex/unseen intent
         open_wins = self.os_controller.get_open_windows() if hasattr(self.os_controller, "get_open_windows") else []
-        llm_res = self.local_llm.reason_intent(command, active_window=active_win, open_windows=open_wins)
+        app_names = [a.name for a in self.destination_resolver.app_discovery.list_apps()]
+        llm_res = self.local_llm.reason_intent(
+            command,
+            active_window=active_win,
+            open_windows=open_wins,
+            discovered_apps=app_names,
+        )
         llm_raw = llm_res.get("raw_response", "")
-        self._set_llm_output(llm_raw[:35] if len(llm_raw) > 35 else llm_raw)
+        self._set_llm_output(llm_raw)
 
         intent = llm_res.get("intent", "noop")
         target = llm_res.get("target")
         speech = llm_res.get("speech", "")
+
+        if intent in {"hotkey", "launch_app", "open_url", "close_window", "shutdown"}:
+            self.memory_store.record(command, intent, target, speech)
+            self._last_executed_command = command
 
         if intent == "hotkey" and isinstance(target, list):
             self.input_controller.send_hotkey(target)
@@ -230,22 +284,25 @@ class IntentDispatcher:
             return ActionEvent(action_type=ActionType.HOTKEY, target="+".join(target), verbal_response=speech, llm_output=llm_raw)
 
         elif intent == "launch_app" and target and str(target).lower() != command.lower():
-            self.os_controller.launch_app(str(target))
-            if speech:
-                self.tts.speak(speech)
-            return ActionEvent(action_type=ActionType.LAUNCH_APP, target=str(target), verbal_response=speech, llm_output=llm_raw)
+            resolved_bin = self.destination_resolver.app_discovery.find_app(str(target)) or str(target)
+            self.os_controller.launch_app(resolved_bin)
+            msg = speech or f"Opening {target}"
+            self.tts.speak(msg)
+            return ActionEvent(action_type=ActionType.LAUNCH_APP, target=resolved_bin, verbal_response=msg, llm_output=llm_raw)
 
         elif intent == "open_url" and target:
-            self.os_controller.open_url(str(target))
-            if speech:
-                self.tts.speak(speech)
-            return ActionEvent(action_type=ActionType.OPEN_URL, target=str(target), verbal_response=speech, llm_output=llm_raw)
+            dest_type, dest_url = self.destination_resolver.resolve(str(target))
+            final_url = dest_url if dest_type == "url" else str(target)
+            self.os_controller.open_url(final_url)
+            msg = speech or f"Opening {target}"
+            self.tts.speak(msg)
+            return ActionEvent(action_type=ActionType.OPEN_URL, target=final_url, verbal_response=msg, llm_output=llm_raw)
 
         elif intent == "web_search" and target:
             return self._handle_web_search(str(target))
 
         elif intent == "close_window":
-            return self._handle_close_window(active_win)
+            return self._handle_close_window(active_win, target=str(target) if target else None)
 
         elif intent == "shutdown":
             msg = speech or "Goodbye! Shutting down Bit."
@@ -274,6 +331,34 @@ class IntentDispatcher:
         """Handles opening an application or website."""
         clean_target = re.sub(r"[\.\?!,]+$", "", target).strip().lower()
         normalized_target = re.sub(r"^(my\s+)", "", clean_target).strip()
+
+        # Friendly verbal response formatting
+        if normalized_target in {"text editor", "editor", "notepad", "code editor"}:
+            friendly_msg = "Opening text editor"
+        elif "herdr" in clean_target:
+            friendly_msg = "Opening Herdr now"
+        elif "whatsapp" in clean_target:
+            friendly_msg = "Opening WhatsApp now"
+        elif normalized_target in {"browser", "web browser", "internet"}:
+            friendly_msg = "Opening browser"
+        elif normalized_target in {"terminal", "console", "shell"}:
+            friendly_msg = "Opening terminal"
+        elif normalized_target in {"file manager", "files", "file explorer"}:
+            friendly_msg = "Opening file manager"
+        else:
+            friendly_msg = f"Opening {clean_target}"
+
+        # Dynamic desktop application and web destination resolution
+        dest_type, dest = self.destination_resolver.resolve(clean_target)
+        if dest_type == "url":
+            self.os_controller.open_url(dest)
+            self.tts.speak(friendly_msg)
+            return ActionEvent(action_type=ActionType.OPEN_URL, target=dest, verbal_response=friendly_msg)
+
+        if dest_type == "app":
+            self.os_controller.launch_app(dest)
+            self.tts.speak(friendly_msg)
+            return ActionEvent(action_type=ActionType.LAUNCH_APP, target=dest, verbal_response=friendly_msg)
 
         # Handle web applications (e.g. "webwhatsapp", "whatsapp")
         if "webwhatsapp" in clean_target or "whatsapp" in clean_target:
@@ -407,14 +492,45 @@ class IntentDispatcher:
         self.tts.speak(msg)
         return ActionEvent(action_type=ActionType.NOOP, verbal_response=msg)
 
-    def _handle_close_window(self, active_win: Optional[WindowInfo]) -> ActionEvent:
-        """Closes active window."""
-        if active_win:
-            self.os_controller.focus_window(active_win.address)
-            msg = f"Closed {active_win.title or active_win.class_name}"
+    def _handle_close_window(
+        self, active_win: Optional[WindowInfo], target: Optional[str] = None
+    ) -> ActionEvent:
+        """Closes targeted or active window."""
+        win_to_close = None
+        if target:
+            windows = self.os_controller.get_open_windows() if hasattr(self.os_controller, "get_open_windows") else []
+            win_to_close = self.decision_engine.disambiguate_window(windows, target)
+
+        if not win_to_close:
+            win_to_close = active_win
+
+        if win_to_close and win_to_close.address:
+            if hasattr(self.os_controller, "close_window"):
+                self.os_controller.close_window(win_to_close.address)
+            name = win_to_close.title or win_to_close.class_name
+            msg = f"Closed {name}"
             self.tts.speak(msg)
-            return ActionEvent(action_type=ActionType.FOCUS_WINDOW, target=active_win.address, verbal_response=msg)
-        return ActionEvent(action_type=ActionType.NOOP)
+            llm_op = f"close_window: {name}"
+            self._set_llm_output(llm_op)
+            return ActionEvent(
+                action_type=ActionType.CLOSE_WINDOW,
+                target=win_to_close.address,
+                verbal_response=msg,
+                llm_output=llm_op,
+            )
+
+        if hasattr(self.os_controller, "close_window"):
+            self.os_controller.close_window("")
+        msg = "Closing active window"
+        self.tts.speak(msg)
+        llm_op = "close_window: active"
+        self._set_llm_output(llm_op)
+        return ActionEvent(
+            action_type=ActionType.CLOSE_WINDOW,
+            target="active",
+            verbal_response=msg,
+            llm_output=llm_op,
+        )
 
     def _handle_visual_click(
         self, target: str, screenshot_bytes: Optional[bytes], is_browser: bool

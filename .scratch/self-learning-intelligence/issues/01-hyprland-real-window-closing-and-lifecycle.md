@@ -4,9 +4,9 @@
 
 **Blocked by:** None (can start immediately)
 
-**Status:** ready-for-agent
+**Status:** done
 
-- [ ] Hyprland controller implements `close_window(address_or_class: str) -> bool` using `hyprctl dispatch closewindow address:<address>` with fallback to `killactive`.
-- [ ] Primary dispatch seam routes close requests to `ActionType.CLOSE_WINDOW`, targeting either the explicitly named window or the currently active window.
-- [ ] Verbal feedback confirms window closure (e.g., "Closed Discord").
-- [ ] Unit and seam tests verify that target window addresses are passed to the compositor close command and `ActionType.CLOSE_WINDOW` is returned.
+- [x] Hyprland controller implements `close_window(address_or_class: str) -> bool` using `hyprctl dispatch closewindow address:<address>` with fallback to `killactive`.
+- [x] Primary dispatch seam routes close requests to `ActionType.CLOSE_WINDOW`, targeting either the explicitly named window or the currently active window.
+- [x] Verbal feedback confirms window closure (e.g., "Closed Discord").
+- [x] Unit and seam tests verify that target window addresses are passed to the compositor close command and `ActionType.CLOSE_WINDOW` is returned.
