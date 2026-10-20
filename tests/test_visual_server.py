@@ -83,3 +83,15 @@ def test_mjpeg_stream_header(running_server):
         chunk = resp.read(256)
         assert b"--frame" in chunk
         assert b"image/jpeg" in chunk
+
+
+def test_api_frame_returns_jpeg_and_headers(running_server):
+    frame_url = f"http://127.0.0.1:{running_server.port}/api/frame"
+    with urllib.request.urlopen(frame_url, timeout=2.0) as resp:
+        assert resp.status == 200
+        assert resp.headers.get("Content-Type") == "image/jpeg"
+        assert "no-cache" in resp.headers.get("Cache-Control", "")
+        assert resp.headers.get("X-Box-Count") == "1"
+        data = resp.read()
+        assert data.startswith(b"\xff\xd8")
+

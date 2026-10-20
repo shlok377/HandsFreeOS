@@ -115,6 +115,25 @@ def run_demo(
         grounder=grounder,
     )
 
+    # Start continuous background screen capture thread for smooth video
+    screencap = ScreenCapture()
+    demo_stop_stream = threading.Event()
+
+    def _bg_demo_streamer():
+        while not demo_stop_stream.is_set():
+            try:
+                shot = screencap.capture_png_bytes()
+                if shot and hub is not None:
+                    hub.update_frame(shot, hub.get_latest_frame().boxes)
+            except Exception:
+                pass
+            time.sleep(0.15)
+
+    stream_thread = None
+    if web_inspect and hub is not None:
+        stream_thread = threading.Thread(target=_bg_demo_streamer, daemon=True)
+        stream_thread.start()
+
     demo_commands = [
         "Hey bit! open webwhatsapp",
         "hey Bit! Open herdr",
@@ -133,9 +152,10 @@ def run_demo(
             time.sleep(0.5)
 
         if web_inspect and hub is not None:
-            console.print("\n[bold green]Visual inspector is running! Open the URL above on your phone.[/bold green]")
+            console.print("\n[bold green]Visual inspector is running live! Open the URL above on your phone.[/bold green]")
             console.input("[dim]Press Enter when done to stop the visual stream...[/dim]")
     finally:
+        demo_stop_stream.set()
         if tunnel_mgr is not None:
             tunnel_mgr.stop()
         if server is not None:
@@ -316,22 +336,28 @@ def run_live(
     except Exception as e:
         dashboard.add_log(f"Mic init notice: {e} (Simulated audio mode enabled)")
 
+    live_stop_stream = threading.Event()
+
+    def _bg_live_streamer():
+        screencap_local = ScreenCapture()
+        while not shutdown_event.is_set() and not live_stop_stream.is_set():
+            try:
+                shot = screencap_local.capture_png_bytes()
+                if shot and hub is not None:
+                    hub.update_frame(shot, hub.get_latest_frame().boxes)
+            except Exception:
+                pass
+            time.sleep(0.15)
+
+    if web_inspect and hub is not None:
+        live_stream_thread = threading.Thread(target=_bg_live_streamer, daemon=True)
+        live_stream_thread.start()
+
     try:
         with Live(dashboard.render(), console=console, refresh_per_second=4) as live:
-            last_bg_capture = 0.0
             while not shutdown_event.is_set():
                 active_win = os_ctrl.get_active_window()
                 dashboard.update_window(active_win)
-
-                if web_inspect and hub is not None and (time.time() - last_bg_capture > 1.5):
-                    last_bg_capture = time.time()
-                    try:
-                        bg_shot = screencap.capture_png_bytes()
-                        if bg_shot:
-                            hub.update_frame(bg_shot, hub.get_latest_frame().boxes)
-                    except Exception:
-                        pass
-
                 live.update(dashboard.render())
                 time.sleep(0.25)
             # Give speech feedback a moment to finish before process termination
@@ -339,6 +365,7 @@ def run_live(
     except KeyboardInterrupt:
         dashboard.add_log("Shutting down HandsFreeOS...")
     finally:
+        live_stop_stream.set()
         if tunnel_mgr is not None:
             tunnel_mgr.stop()
         if server is not None:

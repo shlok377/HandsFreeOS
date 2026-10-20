@@ -174,14 +174,16 @@ INDEX_HTML_TEMPLATE = """<!DOCTYPE html>
       <div class="badge"><div class="pulse-dot"></div> Live Stream</div>
     </div>
     <div class="metrics">
+      <div>FPS: <span id="m-fps" class="metric-val">-- fps</span></div>
       <div>Latency: <span id="m-latency" class="metric-val">-- ms</span></div>
       <div>Elements: <span id="m-count" class="metric-val">0</span></div>
+      <a href="{stream_url}" target="_blank" style="font-size: 0.75rem; color: var(--text-muted); text-decoration: none;">Raw MJPEG</a>
     </div>
   </header>
   <main>
     <div class="stream-container">
       <div class="hud-overlay" id="hud">Awaiting frames...</div>
-      <img id="stream" src="{stream_url}" alt="HandsFreeOS YOLO Visual Stream" />
+      <img id="stream" src="/api/frame{token_param}" data-stream-url="{stream_url}" alt="HandsFreeOS YOLO Visual Stream" />
     </div>
     <section class="elements-card">
       <div class="elements-title">
@@ -193,6 +195,52 @@ INDEX_HTML_TEMPLATE = """<!DOCTYPE html>
   </main>
   <script>
     const token = "{auth_token}";
+    let isFetchingFrame = false;
+    let frameCount = 0;
+    let lastFpsCalc = Date.now();
+    let currentFps = 0;
+
+    // Continuous ultra-low latency frame loop (immune to tunnel buffering & iOS WebKit freezes)
+    async function fetchLiveFrame() {
+      if (isFetchingFrame) return;
+      isFetchingFrame = true;
+      try {
+        const q = token ? `?token=${encodeURIComponent(token)}&_t=${Date.now()}` : `?_t=${Date.now()}`;
+        const resp = await fetch(`/api/frame${q}`, { cache: "no-store" });
+        if (resp.ok) {
+          const blob = await resp.blob();
+          if (blob.size > 0) {
+            const objectUrl = URL.createObjectURL(blob);
+            const img = document.getElementById("stream");
+            const oldUrl = img.dataset.blobUrl;
+            img.src = objectUrl;
+            img.dataset.blobUrl = objectUrl;
+            if (oldUrl) {
+              URL.revokeObjectURL(oldUrl);
+            }
+            frameCount++;
+            const now = Date.now();
+            if (now - lastFpsCalc >= 1000) {
+              currentFps = frameCount;
+              frameCount = 0;
+              lastFpsCalc = now;
+              const fpsEl = document.getElementById("m-fps");
+              if (fpsEl) fpsEl.textContent = `${currentFps} fps`;
+            }
+          }
+        }
+      } catch (err) {
+        console.warn("Frame fetch error:", err);
+      } finally {
+        isFetchingFrame = false;
+        // ~12-15 FPS smooth continuous cadence
+        setTimeout(fetchLiveFrame, 70);
+      }
+    }
+
+    // Launch active sync loop immediately
+    fetchLiveFrame();
+
     async function updateTelemetry() {
       try {
         const query = token ? `?token=${encodeURIComponent(token)}` : '';
@@ -279,6 +327,8 @@ class _VisualStreamHTTPHandler(http.server.BaseHTTPRequestHandler):
             self._handle_index(parsed)
         elif path == "/stream":
             self._handle_stream()
+        elif path == "/api/frame":
+            self._handle_frame()
         elif path == "/api/status":
             self._handle_status()
         elif path == "/api/boxes":
@@ -296,13 +346,33 @@ class _VisualStreamHTTPHandler(http.server.BaseHTTPRequestHandler):
             token_param = f"?token={urllib.parse.quote(auth_token)}"
 
         stream_url = f"/stream{token_param}"
-        html = INDEX_HTML_TEMPLATE.replace("{stream_url}", stream_url).replace("{auth_token}", auth_token)
+        html = (
+            INDEX_HTML_TEMPLATE
+            .replace("{stream_url}", stream_url)
+            .replace("{auth_token}", auth_token)
+            .replace("{token_param}", token_param)
+        )
 
         self.send_response(200)
         self.send_header("Content-Type", "text/html; charset=utf-8")
         self.send_header("Content-Length", str(len(html.encode("utf-8"))))
         self.end_headers()
         self.wfile.write(html.encode("utf-8"))
+
+    def _handle_frame(self):
+        frame = self.server.hub.get_latest_frame()
+        jpeg = frame.frame_bytes
+        self.send_response(200)
+        self.send_header("Content-Type", "image/jpeg")
+        self.send_header("Content-Length", str(len(jpeg)))
+        self.send_header("Cache-Control", "no-cache, no-store, must-revalidate")
+        self.send_header("Pragma", "no-cache")
+        self.send_header("Expires", "0")
+        self.send_header("X-Frame-Timestamp", str(frame.timestamp))
+        self.send_header("X-Frame-Latency", str(frame.latency_ms))
+        self.send_header("X-Box-Count", str(len(frame.boxes)))
+        self.end_headers()
+        self.wfile.write(jpeg)
 
     def _handle_status(self):
         frame = self.server.hub.get_latest_frame()
@@ -335,8 +405,9 @@ class _VisualStreamHTTPHandler(http.server.BaseHTTPRequestHandler):
     def _handle_stream(self):
         self.send_response(200)
         self.send_header("Content-Type", "multipart/x-mixed-replace; boundary=frame")
-        self.send_header("Cache-Control", "no-cache, private")
+        self.send_header("Cache-Control", "no-cache, no-store, must-revalidate")
         self.send_header("Pragma", "no-cache")
+        self.send_header("X-Accel-Buffering", "no")
         self.end_headers()
 
         hub: VisualStreamHub = self.server.hub
