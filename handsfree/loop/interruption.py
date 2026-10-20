@@ -14,8 +14,7 @@ class InterruptionCoordinator:
 
     STANDALONE_ABORT_TOKENS = {
         "wait", "stop", "cancel", "pause", "hold on", "no", "abort",
-        "don't", "dont", "never mind", "nevermind", "halt", "not that", "wrong",
-        "that", "it", "now", "please"
+        "don't", "dont", "never mind", "nevermind", "halt", "not that", "wrong"
     }
 
     ACTION_IGNORE_PATTERNS = [
@@ -62,12 +61,19 @@ class InterruptionCoordinator:
                 self._is_active_action = False
                 return True
 
-        # When idle, only pure standalone abort keywords trigger an abort event
-        words = re.findall(r"\b\w+\b", cleaned)
-        if words and all(w in self.STANDALONE_ABORT_TOKENS for w in words):
-            logger.warning(f"Standalone abort signal detected: '{speech_text}'")
+        # When idle, pure standalone abort keywords or corrections trigger an abort event
+        if re.search(r"\b(wrong\s+window|not\s+that|wrong\s+app|that's\s+wrong)\b", cleaned):
+            logger.warning(f"Verbal correction detected: '{speech_text}'")
             self.input_controller.abort_in_flight()
             return True
+
+        words = re.findall(r"\b\w+\b", cleaned)
+        abort_modifiers = {"that", "it", "there"}
+        if words and any(w in self.STANDALONE_ABORT_TOKENS for w in words):
+            if all(w in self.STANDALONE_ABORT_TOKENS or w in abort_modifiers for w in words):
+                logger.warning(f"Standalone abort signal detected: '{speech_text}'")
+                self.input_controller.abort_in_flight()
+                return True
 
         if cleaned in self.STANDALONE_ABORT_TOKENS:
             self.input_controller.abort_in_flight()

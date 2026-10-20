@@ -1,6 +1,7 @@
 """Domain models for HandsFreeOS."""
 
 from enum import Enum
+import time
 from typing import Any, Dict, List, Optional
 from pydantic import BaseModel, Field
 
@@ -50,6 +51,27 @@ class WindowInfo(BaseModel):
     class_name: str
     workspace_id: int = 1
     is_focused: bool = False
+
+
+class DesktopApp(BaseModel):
+    """Metadata representing an installed Linux desktop application."""
+    name: str
+    exec_cmd: str
+    desktop_file: str
+    generic_name: str = ""
+    comment: str = ""
+    categories: List[str] = Field(default_factory=list)
+    keywords: List[str] = Field(default_factory=list)
+
+
+class MemoryEntry(BaseModel):
+    """A remembered mapping from a natural user phrasing to a canonical OS action."""
+    phrase: str
+    intent: str
+    target: Any
+    speech: str = ""
+    hit_count: int = 1
+    last_updated: float = Field(default_factory=time.time)
 
 
 class JevDecision(BaseModel):

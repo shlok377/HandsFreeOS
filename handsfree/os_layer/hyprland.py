@@ -90,22 +90,41 @@ class HyprlandController(IOSController):
             return None
 
     def focus_window(self, address_or_class: str) -> bool:
-        """Focuses target window via `hyprctl dispatch focuswindow`."""
+        """Focuses target window via `hyprctl dispatch focuswindow` and switches workspace if needed."""
+        if not address_or_class:
+            return False
+
+        try:
+            windows = self.get_open_windows()
+            for w in windows:
+                if w.address == address_or_class or w.class_name.lower() == address_or_class.lower():
+                    if w.workspace_id and w.workspace_id > 0:
+                        self._run_hyprctl(["dispatch", "workspace", str(w.workspace_id)])
+                    break
+        except Exception as e:
+            logger.debug(f"Failed to lookup workspace for window {address_or_class}: {e}")
+
         if address_or_class.startswith("0x"):
-            # Focus by address
             out = self._run_hyprctl(["dispatch", "focuswindow", f"address:{address_or_class}"])
         else:
             out = self._run_hyprctl(["dispatch", "focuswindow", address_or_class])
         return "ok" in out.lower() or out == ""
 
     def close_window(self, address_or_class: str = "") -> bool:
-        """Closes target window via `hyprctl dispatch closewindow` or `killactive`."""
+        """Closes target window via `hyprctl dispatch closewindow` with fallback to `killactive`."""
+        out = ""
         if address_or_class.startswith("0x"):
             out = self._run_hyprctl(["dispatch", "closewindow", f"address:{address_or_class}"])
         elif address_or_class:
             out = self._run_hyprctl(["dispatch", "closewindow", address_or_class])
         else:
             out = self._run_hyprctl(["dispatch", "killactive"])
+
+        # Fallback to killactive if targeted close failed
+        if "error" in out.lower() or ("ok" not in out.lower() and out != ""):
+            fallback_out = self._run_hyprctl(["dispatch", "killactive"])
+            return "ok" in fallback_out.lower() or fallback_out == ""
+
         return "ok" in out.lower() or out == ""
 
     def launch_app(self, command: str) -> bool:

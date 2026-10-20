@@ -178,12 +178,17 @@ class LocalLLMReasoner:
             f"The user asked: '{question}'.\n"
             f"Desktop Context:\n"
             f"- Active window: '{win_title}' ({win_cls})\n"
-            f"- Open windows: {open_wins}\n"
         )
         if screen_ocr:
-            prompt += f"- On-screen detected text: {screen_ocr[:200]}\n"
+            prompt += f"- On-screen visible content / elements: {screen_ocr[:500]}\n"
+        if open_windows:
+            prompt += f"- Other open windows: {open_wins}\n"
 
-        prompt += "\nAnswer the user directly and concisely in 1 or 2 natural sentences.\nAnswer:"
+        prompt += (
+            "\nDescribe what is visually on the user's screen in 1 or 2 natural conversational sentences. "
+            "Focus specifically on the visible content, folders, files, tabs, or elements rather than merely listing window titles.\n"
+            "Answer:"
+        )
 
         try:
             req = urllib.request.Request(
@@ -201,5 +206,8 @@ class LocalLLMReasoner:
                 ans = data.get("response", "").strip()
                 return {"answer": ans, "raw_response": ans}
         except Exception as e:
-            fallback = f"You are viewing '{win_title}', with {open_wins} open."
+            if screen_ocr:
+                fallback = f"Inside '{win_title}', I see {screen_ocr[:100]} on your screen."
+            else:
+                fallback = f"You are viewing '{win_title}', with {open_wins} open."
             return {"answer": fallback, "raw_response": fallback}

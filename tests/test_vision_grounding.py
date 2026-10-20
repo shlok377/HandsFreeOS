@@ -54,3 +54,43 @@ def test_stage_2_vlm_fallback_for_unlabelled_icon(monkeypatch):
 
     assert coords == (450, 600)
     assert tier == "vlm_fallback"
+
+
+def test_omniparser_detector_tsv_parsing(monkeypatch):
+    """Verifies that OmniParserDetector parses tesseract TSV lines into BoundingBox objects."""
+    tsv_mock = """level\tpage_num\tblock_num\tpar_num\tline_num\tword_num\tleft\ttop\twidth\theight\tconf\ttext
+5\t1\t1\t1\t1\t1\t50\t100\t80\t30\t95.0\tDownloads
+5\t1\t1\t1\t1\t2\t140\t100\t60\t30\t90.0\tFolder
+"""
+    detector = OmniParserDetector()
+    monkeypatch.setattr(
+        "subprocess.run",
+        lambda *args, **kwargs: type("Proc", (), {"stdout": tsv_mock.encode("utf-8")})()
+    )
+
+    boxes = detector.detect_elements(b"dummy_png")
+    assert len(boxes) >= 2
+    # Individual word box
+    dl_box = next((b for b in boxes if b.label == "Downloads"), None)
+    assert dl_box is not None
+    assert dl_box.center == (90, 115)
+
+    # Line phrase box
+    phrase_box = next((b for b in boxes if b.label == "Downloads Folder"), None)
+    assert phrase_box is not None
+    assert phrase_box.x_min == 50
+    assert phrase_box.x_max == 200
+    assert phrase_box.center == (125, 115)
+
+
+def test_omniparser_extract_screen_text(monkeypatch):
+    """Verifies screen text extraction formats cleanly."""
+    detector = OmniParserDetector()
+    monkeypatch.setattr(
+        "subprocess.run",
+        lambda *args, **kwargs: type("Proc", (), {"stdout": b"Downloads\nProjects\nDocuments\n"})()
+    )
+    text = detector.extract_screen_text(b"dummy_png")
+    assert "Downloads" in text
+    assert "Projects" in text
+    assert "Documents" in text

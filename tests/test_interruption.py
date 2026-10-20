@@ -28,6 +28,9 @@ def test_verb_object_commands_do_not_trigger_abort(coordinator):
         "stop the music",
         "bye bye",
         "Quit, quit.",
+        "File manager please.",
+        "please",
+        "now",
     ]
     for phrase in non_aborts:
         assert coordinator.check_and_handle_abort(phrase) is False, f"Expected '{phrase}' to not be an abort"

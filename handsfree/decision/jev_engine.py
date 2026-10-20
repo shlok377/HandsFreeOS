@@ -24,10 +24,10 @@ class JevEngine(IDecisionEngine):
         self.command_verbs = {
             "open", "launch", "start", "switch", "focus", "close", "kill",
             "make", "create", "write", "type", "click", "tap", "press",
-            "scroll", "search", "find", "google", "goto", "navigate", "send", "save",
+            "scroll", "search", "find", "google", "go", "goto", "navigate", "send", "save",
             "delete", "remove", "clear", "copy", "paste", "cut", "undo", "redo",
             "rm", "del", "erase", "format", "reboot", "shutdown", "drop", "sudo",
-            "say", "tell", "greet", "exit", "quit", "help"
+            "say", "tell", "greet", "exit", "quit", "help", "file", "show", "read", "view", "see"
         }
 
         # Triggers for live interruption aborts
@@ -160,7 +160,7 @@ class JevEngine(IDecisionEngine):
             return True
         if re.search(r"^(?:who\s+are\s+you|what\s+can\s+you\s+do|how\s+are\s+you|close\s+yourselves|close\s+yourself|exit|quit|stop\s+listening|bye\s+bye|quit[,\s]+quit)$", cleaned):
             return True
-        if re.search(r"\b(what\s+do\s+you\s+see(?:\s+on)?|describe|what's\s+on|what\s+is\s+on)\s+(?:the\s+|my\s+)?screen\b", cleaned):
+        if re.search(r"\b(what\s+do\s+you\s+see|describe|what's\s+on|what\s+is\s+on|what\s+is\s+inside|what's\s+inside|what\s+do\s+you\s+see\s+inside)\b", cleaned):
             return True
         if re.search(r"\bhow\s+many\s+(?:apps|windows|discords|\w+)\b", cleaned):
             return True
@@ -174,8 +174,8 @@ class JevEngine(IDecisionEngine):
         if first_word in self.command_verbs:
             return True
 
-        # Common multi-word phrases (e.g. "make a new txt file", "can you open", "search for")
-        if re.search(r"\b(open|launch|make a|create a|switch to|click on|type in|search in|search for|google for|new tab)\b", cleaned):
+        # Common multi-word phrases (e.g. "make a new txt file", "can you open", "search for", "go to", "file manager please")
+        if re.search(r"\b(open|launch|make a|create a|switch to|click on|type in|search in|search for|google for|new tab|go to|navigate to|file manager)\b", cleaned):
             return True
 
         return False
@@ -258,18 +258,37 @@ class JevEngine(IDecisionEngine):
         cls_name = window.class_name.lower().strip()
 
         # Remove filler words
-        q_clean = re.sub(r"\b(switch to|open|focus|close|the|window|app)\b", "", q).strip()
+        q_clean = re.sub(r"\b(switch to|switch|open|focus on|focus|close|the|window|app|please|on|to|in)\b", "", q)
+        q_clean = re.sub(r"\s+", " ", q_clean).strip()
         if not q_clean:
             q_clean = q
 
-        score_title = SequenceMatcher(None, q_clean, title).ratio()
-        score_class = SequenceMatcher(None, q_clean, cls_name).ratio()
+        # Semantic category matches
+        if q_clean in {"file manager", "files", "file", "folder", "nautilus"}:
+            file_manager_classes = {"org.gnome.nautilus", "nautilus", "dolphin", "thunar", "nemo", "pcmanfm"}
+            if cls_name in file_manager_classes or any(c in cls_name for c in ["nautilus", "dolphin", "thunar", "nemo"]):
+                return 0.95
+            if title in {"home", "files", "downloads", "documents"}:
+                return 0.90
 
+        if q_clean in {"browser", "web", "internet"}:
+            browser_classes = {"firefox", "google-chrome", "chromium", "brave-browser", "zen"}
+            if cls_name in browser_classes or any(b in cls_name for b in ["firefox", "chrome", "chromium"]):
+                return 0.95
+
+        if q_clean in {"terminal", "console", "shell"}:
+            term_classes = {"ghostty", "com.mitchellh.ghostty", "foot", "alacritty", "kitty", "gnome-terminal"}
+            if cls_name in term_classes or any(t in cls_name for t in ["ghostty", "foot", "kitty", "term"]):
+                return 0.95
+
+        # Check if query matches title substring (e.g. "discord" in Firefox tab title "• Discord | DSA ...")
         if q_clean in title or q_clean in cls_name:
-            return 0.9
+            return 0.95
 
         # Direct token match
         if any(token in title or token in cls_name for token in q_clean.split()):
-            return 0.75
+            return 0.85
 
+        score_title = SequenceMatcher(None, q_clean, title).ratio()
+        score_class = SequenceMatcher(None, q_clean, cls_name).ratio()
         return max(score_title, score_class)

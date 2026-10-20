@@ -296,6 +296,56 @@ def test_dispatch_memory_cache_fast_path(dispatcher):
     assert "Cache <5ms" in event.llm_output
 
 
+def test_screen_query_with_ocr_seam(dispatcher, monkeypatch):
+    """Verifies that 'What do you see inside File Manager?' extracts OCR text and answers user."""
+    monkeypatch.setattr(
+        dispatcher.grounder.detector,
+        "extract_screen_text",
+        lambda img: "Downloads | Projects | Documents | photos.jpg"
+    )
+    chunk = SpeechChunk(text="What do you see inside File Manager?", is_final=True)
+    event = dispatcher.process_speech_frame(chunk, screenshot_bytes=b"dummy_png")
+    assert event.action_type == ActionType.ANSWER_USER
+    assert "Downloads" in event.verbal_response or "Projects" in event.verbal_response or "Visual Studio Code" in event.verbal_response
+
+
+def test_go_to_downloads_visual_navigation_seam(dispatcher, monkeypatch):
+    """Verifies that 'Go to downloads.' visually grounds and clicks the element without touching filesystem."""
+    monkeypatch.setattr(
+        dispatcher.grounder,
+        "locate_target",
+        lambda img, target: ((350, 420), "fast_local", 12.0)
+    )
+    chunk = SpeechChunk(text="Go to downloads.", is_final=True)
+    event = dispatcher.process_speech_frame(chunk, screenshot_bytes=b"dummy_png")
+    assert event.action_type == ActionType.CLICK_BOX
+    assert event.target == "(350, 420)"
+    assert "downloads" in event.verbal_response.lower()
+    # Confirm move_and_click was executed
+    assert len(dispatcher.input_controller.history) > 0
+    assert dispatcher.input_controller.history[-1]["action"] == "click"
+
+
+def test_verbal_correction_invalidates_memory_cache(dispatcher):
+    """Verifies that saying 'Wrong window' invalidates the last executed command from memory cache."""
+    dispatcher.memory_store.record("my code editor", "launch_app", "subl")
+    assert dispatcher.memory_store.lookup("my code editor") is not None
+
+    # Run the command to set _last_executed_command
+    chunk1 = SpeechChunk(text="my code editor", is_final=True)
+    dispatcher.process_speech_frame(chunk1)
+    assert dispatcher._last_executed_command == "my code editor"
+
+    # User corrects: "wrong window"
+    chunk2 = SpeechChunk(text="wrong window", is_final=True)
+    abort_event = dispatcher.process_speech_frame(chunk2)
+    assert abort_event.action_type == ActionType.ABORT
+
+    # Cache should now be invalidated
+    assert dispatcher.memory_store.lookup("my code editor") is None
+    assert dispatcher._last_executed_command is None
+
+
 
 
 

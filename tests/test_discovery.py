@@ -6,7 +6,8 @@ import pytest
 from handsfree.os_layer.discovery import AppDiscoveryService, WebDestinationResolver
 
 
-def test_desktop_file_parsing_and_app_indexing():
+def test_desktop_file_parsing_and_app_indexing(monkeypatch):
+    monkeypatch.setattr("shutil.which", lambda b: f"/usr/bin/{b}")
     with tempfile.TemporaryDirectory() as tmpdir:
         # Create a mock .desktop file
         desktop_content = """[Desktop Entry]
@@ -15,19 +16,18 @@ GenericName=Text Editor
 Exec=superedit %F
 Type=Application
 Categories=Utility;TextEditor;
+Keywords=code;ide;programming;
 """
         file_path = os.path.join(tmpdir, "superedit.desktop")
         with open(file_path, "w") as f:
             f.write(desktop_content)
 
-        # Mock shutil.which to pretend superedit exists
         service = AppDiscoveryService(search_paths=[tmpdir])
-        service._name_index["super editor"] = "superedit"
-        service._generic_index["text editor"] = "superedit"
 
         assert service.find_app("super editor") == "superedit"
         assert service.find_app("text editor") == "superedit"
         assert service.find_app("editor") == "superedit"
+        assert service.find_app("programming") == "superedit"
 
 
 def test_web_destination_resolver_known_services():

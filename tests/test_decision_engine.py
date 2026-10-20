@@ -24,6 +24,9 @@ def test_ambient_speech_filtering(jev):
     assert jev.filter_ambient_speech("make a new txt file and type in hello world") is True
     assert jev.filter_ambient_speech("click on the search bar") is True
     assert jev.filter_ambient_speech("close this window") is True
+    assert jev.filter_ambient_speech("File manager please.") is True
+    assert jev.filter_ambient_speech("Go to downloads.") is True
+    assert jev.filter_ambient_speech("What do you see inside File Manager?") is True
 
     # Ambient non-commands
     assert jev.filter_ambient_speech("yeah so then he told me that yesterday") is False
@@ -75,6 +78,8 @@ def test_window_disambiguation(jev):
         WindowInfo(address="0x123", title="WhatsApp - Google Chrome", class_name="google-chrome", workspace_id=1),
         WindowInfo(address="0x456", title="Visual Studio Code", class_name="code", workspace_id=2),
         WindowInfo(address="0x789", title="kitty ~", class_name="kitty", workspace_id=3, is_focused=True),
+        WindowInfo(address="0xabc", title="Home", class_name="org.gnome.Nautilus", workspace_id=2),
+        WindowInfo(address="0xdef", title='• Discord | "DSA" | These Two <3 — Shlok — Mozilla Firefox', class_name="firefox", workspace_id=1),
     ]
 
     start = time.perf_counter()
@@ -89,6 +94,16 @@ def test_window_disambiguation(jev):
     w_this = jev.disambiguate_window(windows, "close this")
     assert w_this is not None
     assert w_this.class_name == "kitty"
+
+    # "focus on file manager" should match Nautilus (title 'Home')
+    w_fm = jev.disambiguate_window(windows, "focus on file manager")
+    assert w_fm is not None
+    assert w_fm.address == "0xabc"
+
+    # "focus on Discord" should match the Firefox tab with Discord
+    w_dc = jev.disambiguate_window(windows, "focus on Discord")
+    assert w_dc is not None
+    assert w_dc.address == "0xdef"
 
 
 def test_safety_scoring(safety):

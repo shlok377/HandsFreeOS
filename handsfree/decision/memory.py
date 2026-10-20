@@ -5,21 +5,11 @@ import logging
 import os
 import re
 import time
-from dataclasses import asdict, dataclass, field
 from typing import Any, Dict, List, Optional
 
+from handsfree.domain.models import MemoryEntry
+
 logger = logging.getLogger(__name__)
-
-
-@dataclass
-class MemoryEntry:
-    """A remembered mapping from a natural user phrasing to a canonical OS action."""
-    phrase: str
-    intent: str
-    target: Any
-    speech: str = ""
-    hit_count: int = 1
-    last_updated: float = field(default_factory=time.time)
 
 
 class EpisodicMemoryStore:
@@ -64,7 +54,7 @@ class EpisodicMemoryStore:
         """Flushes memory entries to disk."""
         try:
             os.makedirs(os.path.dirname(self.storage_path), exist_ok=True)
-            serializable = {k: asdict(v) for k, v in self._cache.items()}
+            serializable = {k: v.model_dump() for k, v in self._cache.items()}
             with open(self.storage_path, "w", encoding="utf-8") as f:
                 json.dump(serializable, f, indent=2)
         except Exception as e:

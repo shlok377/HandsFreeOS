@@ -143,3 +143,29 @@ def test_hyprland_controller_close_window(monkeypatch):
     assert res3 is True
     assert dispatched[-1] == ["dispatch", "killactive"]
 
+    # Close error triggers fallback to killactive
+    dispatched.clear()
+    monkeypatch.setattr(controller, "_run_hyprctl", lambda args: dispatched.append(args) or ("error" if "closewindow" in args else "ok"))
+    res4 = controller.close_window("0xinvalid")
+    assert res4 is True
+    assert dispatched[0] == ["dispatch", "closewindow", "address:0xinvalid"]
+    assert dispatched[1] == ["dispatch", "killactive"]
+
+
+def test_hyprland_controller_focus_window_switches_workspace(monkeypatch):
+    """Verifies focus_window switches workspace if the target window is on a non-active workspace."""
+    controller = HyprlandController()
+    dispatched = []
+    monkeypatch.setattr(controller, "_run_hyprctl", lambda args: dispatched.append(args) or "ok")
+    monkeypatch.setattr(
+        controller,
+        "get_open_windows",
+        lambda: [WindowInfo(address="0xabc", title="Discord", class_name="discord", workspace_id=2)]
+    )
+
+    res = controller.focus_window("0xabc")
+    assert res is True
+    # Should switch to workspace 2, then focuswindow
+    assert ["dispatch", "workspace", "2"] in dispatched
+    assert ["dispatch", "focuswindow", "address:0xabc"] in dispatched
+

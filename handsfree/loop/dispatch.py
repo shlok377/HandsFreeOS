@@ -86,13 +86,16 @@ class IntentDispatcher:
             response_msg = "Halting now"
             self.tts.speak(response_msg)
             self._pending_confirmation = None
+            if self._last_executed_command:
+                self.memory_store.invalidate(self._last_executed_command)
+                self._last_executed_command = None
             return ActionEvent(
                 action_type=ActionType.ABORT,
                 verbal_response=response_msg
             )
 
         # 3. AMBIENT SPEECH FILTER
-        if not self.decision_engine.filter_ambient_speech(raw_text):
+        if not self.decision_engine.filter_ambient_speech(raw_text) and not self.memory_store.lookup(raw_text):
             logger.debug(f"Ambient speech ignored: '{raw_text}'")
             return ActionEvent(action_type=ActionType.NOOP)
 
@@ -126,10 +129,16 @@ class IntentDispatcher:
             self._set_llm_output(llm_op)
             return ActionEvent(action_type=ActionType.NOOP, verbal_response=msg, llm_output=llm_op)
 
-        # Handle screen query ("what do you see on my screen?")
-        if re.search(r"\b(what\s+do\s+you\s+see(?:\s+on)?|describe|what's\s+on|what\s+is\s+on)\s+(?:the\s+|my\s+)?screen\b", cmd_lower):
+        # Handle screen query ("what do you see on my screen?" or "what do you see inside File Manager?")
+        if re.search(r"\b(what\s+do\s+you\s+see|describe|what's\s+on|what\s+is\s+on|what\s+is\s+inside|what's\s+inside|what\s+do\s+you\s+see\s+inside)\b", cmd_lower):
             open_wins = self.os_controller.get_open_windows() if hasattr(self.os_controller, "get_open_windows") else []
-            res = self.local_llm.answer_screen_query(command, active_window=active_win, open_windows=open_wins)
+            screen_text = ""
+            if screenshot_bytes and hasattr(self.grounder, "detector") and hasattr(self.grounder.detector, "extract_screen_text"):
+                screen_text = self.grounder.detector.extract_screen_text(screenshot_bytes)
+
+            res = self.local_llm.answer_screen_query(
+                command, active_window=active_win, open_windows=open_wins, screen_ocr=screen_text
+            )
             ans = res.get("answer", "")
             raw = res.get("raw_response", ans)
             self._set_llm_output(raw[:35] if len(raw) > 35 else raw)
@@ -173,20 +182,7 @@ class IntentDispatcher:
         active_win = mock_active_window or self.os_controller.get_active_window()
         is_browser = self.os_controller.is_browser_window(active_win) if hasattr(self.os_controller, "is_browser_window") else False
 
-        # 5. DICTATION CLASSIFICATION (if active input field is focused)
-        is_focused_input = active_win is not None and getattr(active_win, "is_focused", False)
-        if self.decision_engine.classify_dictation(command, input_focused=is_focused_input):
-            text_to_type = command
-            if text_to_type.lower().startswith("type "):
-                text_to_type = text_to_type[5:].strip()
-            self.input_controller.type_text(text_to_type, is_browser=is_browser)
-            return ActionEvent(
-                action_type=ActionType.TYPE_TEXT,
-                target=text_to_type,
-                verbal_response=f"Typed {text_to_type}"
-            )
-
-        # 6. FAST-PATH MEMORY CACHE LOOKUP (<5ms)
+        # 5. FAST-PATH MEMORY CACHE LOOKUP (<5ms)
         cached = self.memory_store.lookup(command)
         if cached:
             c_intent = cached.get("intent")
@@ -223,6 +219,19 @@ class IntentDispatcher:
                 self.tts.speak(msg)
                 return ActionEvent(action_type=ActionType.SHUTDOWN, target="exit", verbal_response=msg, llm_output=c_llm_op)
 
+        # 6. DICTATION CLASSIFICATION (if active input field is focused)
+        is_focused_input = active_win is not None and getattr(active_win, "is_focused", False)
+        if self.decision_engine.classify_dictation(command, input_focused=is_focused_input):
+            text_to_type = command
+            if text_to_type.lower().startswith("type "):
+                text_to_type = text_to_type[5:].strip()
+            self.input_controller.type_text(text_to_type, is_browser=is_browser)
+            return ActionEvent(
+                action_type=ActionType.TYPE_TEXT,
+                target=text_to_type,
+                verbal_response=f"Typed {text_to_type}"
+            )
+
         # 7. WEB SEARCH INTENT ("search <query> [in my browser|on google|on web|online]" or "google <query>")
         search_match = re.search(
             r"^(?:please\s+)?(?:search(?:\s+for)?|google)\s+(.+?)(?:\s+(?:in\s+(?:my\s+)?browser|on\s+google|on\s+(?:the\s+)?web|online))?$",
@@ -252,9 +261,10 @@ class IntentDispatcher:
         if cmd_lower in {"close this", "close window", "close"}:
             return self._handle_close_window(active_win)
 
-        # 10. VISUAL CLICK & GROUNDING
-        if re.search(r"\b(click|tap|press)\b", cmd_lower):
-            target = re.sub(r"^(please\s+)?(click\s+(on\s+)?|tap\s+(on\s+)?|press\s+)", "", command, flags=re.IGNORECASE).strip()
+        # 10. VISUAL NAVIGATION & CLICK GROUNDING ("go to downloads", "click on X", "navigate to Y")
+        if re.search(r"\b(click|tap|press|go\s+to|navigate\s+to)\b", cmd_lower):
+            target = re.sub(r"^(please\s+)?(click\s+(on\s+)?|tap\s+(on\s+)?|press\s+|go\s+to\s+|navigate\s+to\s+)", "", command, flags=re.IGNORECASE).strip()
+            target = re.sub(r"^(the\s+)", "", target, flags=re.IGNORECASE).strip()
             return self._handle_visual_click(target, screenshot_bytes, is_browser)
 
         # 11. System-2 Fallback: Local Qwen reasoner for complex/unseen intent
@@ -550,16 +560,21 @@ class IntentDispatcher:
 
             msg = f"Clicked {clean_target}"
             self.tts.speak(msg)
+            llm_op = f"click: {clean_target} -> ({x}, {y})"
+            self._set_llm_output(llm_op)
             return ActionEvent(
                 action_type=ActionType.CLICK_BOX,
                 target=f"({x}, {y})",
                 payload={"tier": tier, "latency_ms": latency},
-                verbal_response=msg
+                verbal_response=msg,
+                llm_output=llm_op,
             )
 
         msg = f"Could not locate {clean_target} on screen"
         self.tts.speak(msg)
-        return ActionEvent(action_type=ActionType.NOOP, verbal_response=msg)
+        llm_op = f"click failed: {clean_target}"
+        self._set_llm_output(llm_op)
+        return ActionEvent(action_type=ActionType.NOOP, verbal_response=msg, llm_output=llm_op)
 
     def _execute_confirmed_action(self, action: ActionEvent) -> ActionEvent:
         """Executes a previously staged destructive action after user confirmation."""

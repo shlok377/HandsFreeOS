@@ -6,21 +6,11 @@ import logging
 import os
 import re
 import shutil
-from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Tuple
 
+from handsfree.domain.models import DesktopApp
+
 logger = logging.getLogger(__name__)
-
-
-@dataclass
-class DesktopApp:
-    """Metadata representing an installed Linux desktop application."""
-    name: str
-    exec_cmd: str
-    desktop_file: str
-    generic_name: str = ""
-    comment: str = ""
-    categories: List[str] = field(default_factory=list)
 
 
 class AppDiscoveryService:
@@ -84,6 +74,8 @@ class AppDiscoveryService:
             comment = parser.get(section, "Comment") if parser.has_option(section, "Comment") else ""
             cat_raw = parser.get(section, "Categories") if parser.has_option(section, "Categories") else ""
             categories = [c.strip() for c in cat_raw.split(";") if c.strip()]
+            kw_raw = parser.get(section, "Keywords") if parser.has_option(section, "Keywords") else ""
+            keywords = [k.strip() for k in kw_raw.split(";") if k.strip()]
 
             desktop_id = os.path.basename(file_path)
             app = DesktopApp(
@@ -93,6 +85,7 @@ class AppDiscoveryService:
                 generic_name=generic_name,
                 comment=comment,
                 categories=categories,
+                keywords=keywords,
             )
 
             self._apps[desktop_id] = app
@@ -102,6 +95,10 @@ class AppDiscoveryService:
 
             if generic_name:
                 self._generic_index[generic_name.lower()] = binary
+
+            for kw in keywords:
+                if kw.lower() not in self._generic_index:
+                    self._generic_index[kw.lower()] = binary
 
         except Exception as e:
             logger.debug(f"Failed parsing desktop file {file_path}: {e}")
@@ -168,6 +165,9 @@ class WebDestinationResolver:
     FLUFF_SUFFIXES = [
         r"\s+in\s+(?:my\s+|the\s+)?browser$",
         r"\s+from\s+(?:my\s+|the\s+)?browser$",
+        r"\s+on\s+(?:my\s+|the\s+)?screen$",
+        r"\s+on\s+screen$",
+        r"\s+from\s+(?:my\s+|the\s+)?computer$",
         r"\s+on\s+(?:the\s+)?web$",
         r"\s+online$",
         r"\s+website$",
